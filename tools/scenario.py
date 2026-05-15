@@ -47,6 +47,11 @@ class ScenarioConfig:
     variance_speed: float = 0.01
     variance_direction: float = 0.01
     batch_size: int = 50
+    gmrf_lambda_advection: float = 10.0
+    gmrf_lambda_mass_conservation: float = 100.0
+    gmrf_lambda_diffusion: float = 0.0001
+    gmrf_lambda_obstacles: float = 100.0
+    gmrf_num_iterations_map: int = 25
     gp_length_scale: float = 1.0
     gp_optimize_length_scale: bool = True
 
@@ -99,6 +104,13 @@ class ScenarioConfig:
             variance_speed=float(gmrf.get("var_speed", cls.variance_speed)),
             variance_direction=float(gmrf.get("var_direction", cls.variance_direction)),
             batch_size=int(gmrf.get("batch_size", cls.batch_size)),
+            gmrf_lambda_advection=float(gmrf.get("lambda_advection", cls.gmrf_lambda_advection)),
+            gmrf_lambda_mass_conservation=float(
+                gmrf.get("lambda_mass_conservation", cls.gmrf_lambda_mass_conservation)
+            ),
+            gmrf_lambda_diffusion=float(gmrf.get("lambda_diffusion", cls.gmrf_lambda_diffusion)),
+            gmrf_lambda_obstacles=float(gmrf.get("lambda_obstacles", cls.gmrf_lambda_obstacles)),
+            gmrf_num_iterations_map=int(gmrf.get("num_iterations_MAP", cls.gmrf_num_iterations_map)),
             gp_length_scale=float(gp.get("length_scale", cls.gp_length_scale)),
             gp_optimize_length_scale=bool(gp.get("optimize_length_scale", cls.gp_optimize_length_scale))
         )

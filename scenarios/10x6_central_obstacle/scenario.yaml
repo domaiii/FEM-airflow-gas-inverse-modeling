@@ -21,7 +21,7 @@ ns_solver_parameters:
   maxit: 25
   tol: 0.01
   damping: null
-  viscosity: 1.0e-05
+  viscosity: 1.0e-04
   weight_misfit: 100.0
   weight_pde_res: 1.0
   weight_reg: 0.01
@@ -31,6 +31,11 @@ gmrf_parameters:
   var_speed: 0.01
   var_direction: 0.01
   batch_size: 25
+  lambda_advection: 10.0
+  lambda_mass_conservation: 100.0
+  lambda_diffusion: 0.0001
+  lambda_obstacles: 100.0
+  num_iterations_MAP: 25
 gp_parameters:
   length_scale: 1.0
   optimize_length_scale: true
