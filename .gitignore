@@ -12,3 +12,4 @@ log/
 ros2/results/
 **/results/
 csv_wind_data/10x6_central_obstacle/csv_wind_sample_sets/
+*.pdf
