@@ -14,6 +14,7 @@ from scenario import ScenarioConfig, infer_z_height
 EVALUATION_METRICS = [
     "vector_rmse_m_per_s",
     "relative_l2_error",
+    "magnitude_mae_m_per_s",
     "magnitude_rmse_m_per_s",
     "angular_error_mean_deg",
     "angular_error_median_deg",
@@ -161,6 +162,7 @@ def compute_csv_error_metrics(
     return {
         "vector_rmse_m_per_s": float(np.sqrt(np.mean(sq_norm))),
         "relative_l2_error": relative_l2_error,
+        "magnitude_mae_m_per_s": float(np.mean(np.abs(speed_diff))),
         "magnitude_rmse_m_per_s": float(np.sqrt(np.mean(speed_diff * speed_diff))),
         "angular_error_mean_deg": angular_error_mean_deg,
         "angular_error_median_deg": angular_error_median_deg,
@@ -258,6 +260,7 @@ def aggregate_metric(df: pd.DataFrame, metric: str) -> pd.DataFrame:
 def metric_name(metric: str) -> str:
     names = {
         "vector_rmse_m_per_s": "Vector RMSE",
+        "magnitude_mae_m_per_s": "Magnitude MAE",
         "magnitude_rmse_m_per_s": "Magnitude RMSE",
         "relative_l2_error": "Relative L2 error",
         "angular_error_mean_deg": "Mean angular error",
@@ -271,6 +274,7 @@ def metric_name(metric: str) -> str:
 def metric_label(metric: str, band: str) -> str:
     labels = {
         "vector_rmse_m_per_s": "Vector RMSE [m/s]",
+        "magnitude_mae_m_per_s": "Magnitude MAE [m/s]",
         "magnitude_rmse_m_per_s": "Magnitude RMSE [m/s]",
         "relative_l2_error": "Relative L2 error [-]",
         "angular_error_mean_deg": "Mean angular error [deg]",

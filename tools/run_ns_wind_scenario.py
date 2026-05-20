@@ -14,6 +14,7 @@ from mpi4py import MPI
 from airflow_estimator import AirflowEstimator
 from csv_utilities import csv_to_function
 from scenario import ScenarioConfig, infer_z_height
+from visualizer import Visualizer
 
 
 @contextmanager
@@ -53,14 +54,6 @@ def solve_estimator(estimator: AirflowEstimator, config: ScenarioConfig):
             regularization=config.regularization,
             verbose=False,
         )
-    if solver_name == "weak_penalty":
-        return estimator.solve_weak_penalty(
-            maxit=config.maxit,
-            tol=config.tol,
-            damping=config.damping,
-            regularization=config.regularization,
-            verbose=False,
-        )
     if solver_name == "linear_least_squares":
         return estimator.solve_linear_least_squares(
             maxit=config.maxit,
@@ -69,7 +62,7 @@ def solve_estimator(estimator: AirflowEstimator, config: ScenarioConfig):
             verbose=False,
         )
     raise ValueError(
-        f"Unsupported solver {config.solver}, use one of: minimum_residual, weak_penalty, linear_least_squares."
+        f"Unsupported solver {config.solver}, use one of: minimum_residual, linear_least_squares."
     )
 
 def run_case(config: ScenarioConfig, sample_csv: Path, sample_size: int | None, verbose: bool) -> dict:
@@ -165,16 +158,22 @@ def run_case(config: ScenarioConfig, sample_csv: Path, sample_size: int | None, 
     }
 
     estimate_path = result_dir / "wind_estimate.csv"
+    plot_path = result_dir / "wind_estimate.png"
     metadata_path = result_dir / "metadata_wind_est.json"
     save_velocity_csv(estimate_path, u_est)
+    Visualizer.plot_wind_2Dcsv(
+        estimate_path,
+        output_path=plot_path,
+        title="NSMR wind estimate",
+        show=False,
+    )
     metadata["wind_estimate_csv"] = str(estimate_path)
+    metadata["wind_estimate_png"] = str(plot_path)
     with metadata_path.open("w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=2)
 
     if verbose:
         print("---")
-        #print(f"Saved estimate to: {estimate_path}")
-        #print(f"Saved metadata to: {metadata_path}")
 
     return metadata
 

@@ -57,7 +57,7 @@ def run_case(config: ScenarioConfig, sample_csv: Path, sample_size: int | None, 
     result_dir = result_dir / sample_csv.stem
     result_dir.mkdir(parents=True, exist_ok=True)
 
-    grid = Grid.from_occupancy_yaml(config.occupancy_yaml)
+    grid = Grid.from_occupancy_yaml(config.occupancy_yaml, cell_size=config.gp_grid_cell_size)
     grid.add_csv_measurements(sample_csv, count=sample_size, std_noise=config.wind_noise_std)
 
     estimation_start = time.perf_counter()
@@ -87,6 +87,9 @@ def run_case(config: ScenarioConfig, sample_csv: Path, sample_size: int | None, 
         "wind_estimate_png": str(plot_path),
         "gp_length_scale": float(config.gp_length_scale),
         "gp_optimize_length_scale": bool(config.gp_optimize_length_scale),
+        "gp_grid_cell_size": None if config.gp_grid_cell_size is None else float(config.gp_grid_cell_size),
+        "gp_effective_cell_size": float(grid.cell_size),
+        "gp_grid_shape": [int(grid.n_cols), int(grid.n_rows)],
         "n_measurements_used": int(len(grid.measurements)),
         "n_discretization_points": int(np.count_nonzero(grid.free_mask)),
         "estimation_runtime_sec": float(estimation_runtime_sec),

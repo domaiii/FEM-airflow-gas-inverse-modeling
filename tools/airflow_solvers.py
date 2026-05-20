@@ -67,8 +67,8 @@ class BaseAirflowSolver(ABC):
             diff = np.linalg.norm(wh.x.array - wh_prev.x.array) / (np.linalg.norm(wh.x.array) + 1e-10)
             iterations = k + 1
             final_diff = float(diff)
-            if verbose:
-                self._report_iteration(k, diff, wh, reg_mode, context)
+            # if verbose:
+            #    self._report_iteration(k, diff, wh, reg_mode, context)
             if diff < tol:
                 converged = True
                 break
@@ -280,118 +280,6 @@ class MinimumResidualSolver(BaseAirflowSolver):
                 + self.ctx.weight_misfit * misfit
             ),
         }
-
-
-class WeakPenaltySolver(BaseAirflowSolver):
-
-    def _build_system(self, wh_prev: fem.Function, reg_mode: str):
-        uh_prev, _ = wh_prev.split()
-        (u, p) = ufl.TrialFunctions(self.ctx.W)
-        (v, q) = ufl.TestFunctions(self.ctx.W)
-        domain = self.ctx.domain
-
-        nu = fem.Constant(domain, PETSc.ScalarType(self.ctx.viscosity))
-        w_pde = fem.Constant(domain, PETSc.ScalarType(self.ctx.weight_pde_res))
-        w_reg = fem.Constant(domain, PETSc.ScalarType(self.ctx.weight_reg))
-
-        if reg_mode == "value":
-            reg_term = inner(u, v)
-        else:
-            reg_term = inner(grad(u), grad(v))
-
-        a_form = fem.form((
-            w_pde * (
-                inner(nu * grad(u), grad(v))
-                + inner(grad(u) * uh_prev, v)
-                - p * div(v)
-                + q * div(u)
-            )
-            + w_reg * reg_term
-        ) * dx)
-
-        zero_vec = fem.Constant(domain, PETSc.ScalarType((0.0,) * domain.geometry.dim))
-        L_form = fem.form(inner(zero_vec, v) * dx)
-
-        K_reg = assemble_matrix(a_form)
-        K_reg.assemble()
-        f_reg = assemble_vector(L_form)
-
-        R = PETSc.Mat().createAIJ(K_reg.getSizes(), nnz=1, comm=K_reg.comm)
-        R.setUp()
-        r_vec = f_reg.duplicate()
-        r_vec.set(0.0)
-
-        for bc in self.ctx.bcs:
-            for dof in bc.dof_indices()[0]:
-                R.setValue(dof, dof, 1.0)
-        R.assemble()
-
-        S = PETSc.Mat().createAIJ(K_reg.getSizes(), nnz=1, comm=K_reg.comm)
-        S.setUp()
-        for i in map(int, self.ctx.measurement_ids_W):
-            S.setValue(i, i, 1.0)
-        S.assemble()
-
-        s_vec = self.ctx.w_measured.x.petsc_vec.duplicate()
-        S.mult(self.ctx.w_measured.x.petsc_vec, s_vec)
-
-        K_reg.axpy(
-            self.ctx.weight_boundary,
-            R,
-            structure=PETSc.Mat.Structure.DIFFERENT_NONZERO_PATTERN,
-        )
-        K_reg.axpy(
-            self.ctx.weight_misfit,
-            S,
-            structure=PETSc.Mat.Structure.DIFFERENT_NONZERO_PATTERN,
-        )
-
-        f_reg.axpy(self.ctx.weight_boundary, r_vec)
-        f_reg.axpy(self.ctx.weight_misfit, s_vec)
-
-        diag = K_reg.getDiagonal()
-        if diag.min()[0] < 1e-15:
-            print(f"WARNUNG: Matrix hat extrem kleine Diagonalelemente! Min: {diag.min()[0]}")
-        if np.any(np.isnan(f_reg.array)):
-            print("FEHLER: f_reg enthält NaNs!")
-
-        return K_reg, f_reg
-
-    def _solve_step(self, wh_prev: fem.Function, wh: fem.Function, reg_mode: str, context):
-        A, b = self._build_system(wh_prev, reg_mode)
-        ksp = PETSc.KSP().create(A.comm)
-        ksp.setOperators(A)
-        ksp.setType("preonly")
-        ksp.getPC().setType("lu")
-        ksp.setFromOptions()
-        ksp.solve(b, wh.x.petsc_vec)
-        wh.x.petsc_vec.assemblyBegin()
-        wh.x.petsc_vec.assemblyEnd()
-        wh.x.array[:] = wh.x.petsc_vec.getArray(readonly=True)
-
-    def _evaluate_terms(self, wh: fem.Function, reg_mode: str, context) -> dict[str, float]:
-        pde = self._weak_form_residual(wh)
-        reg = self._value_regularization(wh, reg_mode)
-        boundary = self._boundary_penalty(wh)
-        misfit = self._measurement_misfit(wh)
-
-        return {
-            "pde_unweighted": pde,
-            "reg_unweighted": reg,
-            "boundary_unweighted": boundary,
-            "misfit_unweighted": misfit,
-            "pde_weighted": self.ctx.weight_pde_res * pde,
-            "reg_weighted": self.ctx.weight_reg * reg,
-            "boundary_weighted": self.ctx.weight_boundary * boundary,
-            "misfit_weighted": self.ctx.weight_misfit * misfit,
-            "objective_total_weighted": (
-                self.ctx.weight_pde_res * pde
-                + self.ctx.weight_reg * reg
-                + self.ctx.weight_boundary * boundary
-                + self.ctx.weight_misfit * misfit
-            ),
-        }
-
 
 class LinearLeastSquaresSolver(BaseAirflowSolver):
 

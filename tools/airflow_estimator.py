@@ -11,8 +11,7 @@ from dolfinx import fem, mesh
 from tools.airflow_solvers import (
     AirflowSolverConfig,
     LinearLeastSquaresSolver,
-    MinimumResidualSolver,
-    WeakPenaltySolver,
+    MinimumResidualSolver
 )
 
 class AirflowMeasurements:
@@ -394,24 +393,6 @@ class AirflowEstimator:
                                regularization: str | None = None,
                                verbose: bool = False):
         solver = MinimumResidualSolver(self._build_solver_context())
-        result = solver.solve(
-            maxit=maxit,
-            tol=tol,
-            damping=damping,
-            regularization=regularization,
-            verbose=verbose,
-        )
-        self.last_solver_status = solver.last_status
-        self.w_final = result
-        return result
-
-    def solve_weak_penalty(self,
-                           maxit: int = 10,
-                           tol: float = 1e-2,
-                           damping: float | None = None,
-                           regularization: str | None = None,
-                           verbose: bool = False):
-        solver = WeakPenaltySolver(self._build_solver_context())
         result = solver.solve(
             maxit=maxit,
             tol=tol,

@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+import math
 import numpy as np
 import yaml
 import pandas as pd
@@ -6,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import RBF
+from sklearn.gaussian_process.kernels import ConstantKernel, RBF
 
 @dataclass
 class Measurement:
@@ -23,6 +24,9 @@ class Grid:
         self.cell_size = float(cell_size)
 
         self.origin = origin
+        self.measurement_origin = origin
+        self.measurement_cell_size = self.cell_size
+        self.measurement_free_mask: np.ndarray | None = None
         x = origin[0] + (np.arange(self.n_cols) + 0.5) * self.cell_size
         y = origin[1] + (np.arange(self.n_rows) + 0.5) * self.cell_size
         self.xx, self.yy = np.meshgrid(x, y)
@@ -33,7 +37,7 @@ class Grid:
         self.measurements: list[Measurement] = []
 
     @classmethod
-    def from_occupancy_yaml(cls, yaml_path: str | Path):
+    def from_occupancy_yaml(cls, yaml_path: str | Path, cell_size: float | None = None):
         yaml_path = Path(yaml_path).resolve()
         with yaml_path.open("r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
@@ -55,8 +59,46 @@ class Grid:
         free_mask[unknown_mask] = False
 
         n_rows, n_cols = image.shape
-        grid = cls(n_cols=n_cols, n_rows=n_rows, cell_size=resolution, origin=origin_xy)
-        grid.free_mask = free_mask
+        if cell_size is None:
+            grid = cls(n_cols=n_cols, n_rows=n_rows, cell_size=resolution, origin=origin_xy)
+            grid.free_mask = free_mask
+            grid.measurement_origin = origin_xy
+            grid.measurement_cell_size = resolution
+            grid.measurement_free_mask = free_mask
+            return grid
+
+        cell_size = float(cell_size)
+        if cell_size <= 0:
+            raise ValueError(f"cell_size must be positive, got {cell_size}.")
+
+        x_min = origin_xy[0]
+        x_max = origin_xy[0] + n_cols * resolution
+        y_min = origin_xy[1]
+        y_max = origin_xy[1] + n_rows * resolution
+
+        x0 = cell_size * cls._round_half_away_from_zero(x_min / cell_size)
+        y0 = cell_size * cls._round_half_away_from_zero(y_min / cell_size)
+        x1 = cell_size * cls._round_half_away_from_zero(x_max / cell_size)
+        y1 = cell_size * cls._round_half_away_from_zero(y_max / cell_size)
+
+        gp_cols = cls._round_half_away_from_zero((x1 - x0) / cell_size)
+        gp_rows = cls._round_half_away_from_zero((y1 - y0) / cell_size)
+        grid = cls(n_cols=gp_cols, n_rows=gp_rows, cell_size=cell_size, origin=(x0, y0))
+
+        col_idx = np.floor((grid.xx - origin_xy[0]) / resolution).astype(np.int64)
+        row_idx = np.floor((grid.yy - origin_xy[1]) / resolution).astype(np.int64)
+        in_bounds = (
+            (col_idx >= 0)
+            & (row_idx >= 0)
+            & (col_idx < n_cols)
+            & (row_idx < n_rows)
+        )
+        coarse_free_mask = np.zeros_like(grid.xx, dtype=bool)
+        coarse_free_mask[in_bounds] = free_mask[row_idx[in_bounds], col_idx[in_bounds]]
+        grid.free_mask = coarse_free_mask
+        grid.measurement_origin = origin_xy
+        grid.measurement_cell_size = resolution
+        grid.measurement_free_mask = free_mask
         return grid
 
     def gaussian_kernel(self, x: float, y: float, x0: float, y0: float, sigma: float) -> np.ndarray:
@@ -97,13 +139,18 @@ class Grid:
 
     def add_measurement(self, x, y, u_x, u_y):
 
-        col_idx = int(np.floor((x - self.origin[0]) / self.cell_size))
-        row_idx = int(np.floor((y - self.origin[1]) / self.cell_size))
+        origin = self.measurement_origin
+        cell_size = self.measurement_cell_size
+        free_mask = self.measurement_free_mask if self.measurement_free_mask is not None else self.free_mask
 
-        if col_idx < 0 or row_idx < 0 or col_idx >= self.n_cols or row_idx >= self.n_rows:
+        col_idx = int(np.floor((x - origin[0]) / cell_size))
+        row_idx = int(np.floor((y - origin[1]) / cell_size))
+
+        n_rows, n_cols = free_mask.shape
+        if col_idx < 0 or row_idx < 0 or col_idx >= n_cols or row_idx >= n_rows:
             raise ValueError(f"Measurement at ({x}, {y}) is out of bounds of the rectangular domain.")
         
-        elif not self.free_mask[row_idx, col_idx] :
+        elif not free_mask[row_idx, col_idx] :
             print(f"Ignoring measurement at ({x}, {y}). Not within free domain area.")
 
         else:
@@ -159,10 +206,22 @@ class Grid:
         ux_m = np.array([m.u_x for m in self.measurements], dtype=float)
         uy_m = np.array([m.u_y for m in self.measurements], dtype=float)
 
-        length_scale_bounds = (1e-2, 1e2) if optimize_length_scale else "fixed"
-        kernel = 1.0 * RBF([length, length], length_scale_bounds=length_scale_bounds)
+        if optimize_length_scale:
+            kernel = ConstantKernel(1.0, constant_value_bounds=(1e-5, 1e5)) * RBF(
+                [length, length],
+                length_scale_bounds=(1e-2, 1e2),
+            )
+            optimizer = "fmin_l_bfgs_b"
+        else:
+            kernel = ConstantKernel(1.0, constant_value_bounds="fixed") * RBF(
+                [length, length],
+                length_scale_bounds="fixed",
+            )
+            optimizer = None
+
         gp = GaussianProcessRegressor(
             kernel=kernel,
+            optimizer=optimizer,
             n_restarts_optimizer=9 if optimize_length_scale else 0,
         )
         gp.fit(np.vstack([x_m, y_m]).T, np.vstack([ux_m, uy_m]).T)
@@ -252,6 +311,12 @@ class Grid:
 
         values = np.rint(values * (255.0 / max_value)).astype(np.uint8)
         return values.reshape((height, width))
+
+    @staticmethod
+    def _round_half_away_from_zero(value: float) -> int:
+        if value >= 0:
+            return int(math.floor(value + 0.5))
+        return int(math.ceil(value - 0.5))
 
 if __name__ == "__main__":
     grid = Grid.from_occupancy_yaml("/app/scenarios/10x6_labyrinth/geometry/occupancy.yaml")

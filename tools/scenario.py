@@ -54,6 +54,7 @@ class ScenarioConfig:
     gmrf_num_iterations_map: int = 25
     gp_length_scale: float = 1.0
     gp_optimize_length_scale: bool = True
+    gp_grid_cell_size: float | None = None
 
     @classmethod
     def load(cls, scenario: str | Path) -> "ScenarioConfig":
@@ -112,7 +113,11 @@ class ScenarioConfig:
             gmrf_lambda_obstacles=float(gmrf.get("lambda_obstacles", cls.gmrf_lambda_obstacles)),
             gmrf_num_iterations_map=int(gmrf.get("num_iterations_MAP", cls.gmrf_num_iterations_map)),
             gp_length_scale=float(gp.get("length_scale", cls.gp_length_scale)),
-            gp_optimize_length_scale=bool(gp.get("optimize_length_scale", cls.gp_optimize_length_scale))
+            gp_optimize_length_scale=bool(gp.get("optimize_length_scale", cls.gp_optimize_length_scale)),
+            gp_grid_cell_size=(
+                None if gp.get("grid_cell_size", cls.gp_grid_cell_size) is None
+                else float(gp["grid_cell_size"])
+            ),
         )
 
 
