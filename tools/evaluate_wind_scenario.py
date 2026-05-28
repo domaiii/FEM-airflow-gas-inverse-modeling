@@ -10,15 +10,16 @@ import pandas as pd
 from scipy.spatial import cKDTree
 from scenario import ScenarioConfig, infer_z_height
 
+#plt.rcParams['font.sans-serif'] = ['Tahoma']
 
 EVALUATION_METRICS = [
     "vector_rmse_m_per_s",
     "relative_l2_error",
     "magnitude_mae_m_per_s",
-    "magnitude_rmse_m_per_s",
+    #"magnitude_rmse_m_per_s",
     "angular_error_mean_deg",
-    "angular_error_median_deg",
-    "angular_error_rmse_deg",
+    #"angular_error_median_deg",
+    #"angular_error_rmse_deg",
     "estimation_runtime_sec",
 ]
 
@@ -301,13 +302,114 @@ def plot_metric(summary: pd.DataFrame, metric: str, output_path: Path, band: str
             spread = method_df[band].to_numpy(dtype=float)
             ax.fill_between(x, y - spread, y + spread, alpha=0.18)
 
-    ax.set_xlabel("Number of samples")
+    ax.set_xlabel("Number of Measurements")
     ax.set_ylabel(metric_label(metric, band))
     ax.set_title(f"{metric_name(metric)} vs. number of samples")
     ax.grid(True, alpha=0.3)
     ax.legend(title="Method")
     fig.tight_layout()
     fig.savefig(output_path)
+    plt.close(fig)
+
+
+def plot_combined_accuracy(
+    magnitude_summary: pd.DataFrame,
+    angular_summary: pd.DataFrame,
+    output_path: Path,
+) -> None:
+    fig, ax_ang = plt.subplots(figsize=(7,5), dpi=160)
+    ax_mag = ax_ang.twinx()
+
+    methods = sorted(
+        set(magnitude_summary["method"].unique())
+        | set(angular_summary["method"].unique())
+    )
+    
+    cmap = plt.get_cmap("Set1")
+    colors = [cmap.colors[i] for i in [0, 1, 2, 4, 5]]
+
+
+    method_colors = {
+        method: colors[i]
+        for i, method in enumerate(methods)
+    }
+
+    angular_handles = []
+    angular_labels = []
+    magnitude_handles = []
+    magnitude_labels = []
+    for method in methods:
+        color = method_colors[method]
+
+        method_ang = angular_summary[angular_summary["method"] == method].sort_values("sample_size")
+        if not method_ang.empty:
+            line_ang, = ax_ang.plot(
+                method_ang["sample_size"].to_numpy(dtype=float),
+                method_ang["mean"].to_numpy(dtype=float),
+                marker="D",
+                markersize=5,
+                linewidth=1.8,
+                color=color,
+                linestyle="--",
+                label=f"{method} angular",
+            )
+            angular_handles.append(line_ang)
+            angular_labels.append(method)
+    
+    for method in methods:
+        color = method_colors[method]
+        method_mag = magnitude_summary[magnitude_summary["method"] == method].sort_values("sample_size")
+        if not method_mag.empty:
+            line_mag, = ax_mag.plot(
+                method_mag["sample_size"].to_numpy(dtype=float),
+                method_mag["mean"].to_numpy(dtype=float),
+                marker="o",
+                markersize=5,
+                linewidth=1.8,
+                color=color,
+                linestyle="-",
+                label=f"{method} magnitude",
+            )
+            magnitude_handles.append(line_mag)
+            magnitude_labels.append(method)
+
+    max_ang = pd.to_numeric(angular_summary["mean"], errors="coerce").max()
+    min_ang = pd.to_numeric(angular_summary["mean"], errors="coerce").min()
+
+    max_mag = pd.to_numeric(magnitude_summary["mean"], errors="coerce").max()
+    min_mag = pd.to_numeric(magnitude_summary["mean"], errors="coerce").min()
+
+    ax_ang.set_ylim(8, 95)
+    ax_mag.set_ylim(0.0, max_mag * 1.05)
+
+    ax_ang.set_xlabel("Number of Measurements")
+    ax_ang.set_ylabel("Mean Angular Error [deg]")
+    ax_mag.set_ylabel("Mean Magnitude Error [m/s]")
+    ax_ang.set_title("Average Angular and Magnitude Errors – Scenario B")
+    ax_ang.grid(True, alpha=0.3)
+    if angular_handles:
+        angular_legend = ax_ang.legend(
+            angular_handles,
+            angular_labels,
+            title="Angular Errors",
+            loc="upper right",
+            bbox_to_anchor=(0.48, 0.99),
+            fontsize="small",
+            handlelength=3.0
+        )
+        ax_ang.add_artist(angular_legend)
+    if magnitude_handles:
+        ax_mag.legend(
+            magnitude_handles,
+            magnitude_labels,
+            title="Magnitude Errors",
+            loc="upper right",
+            bbox_to_anchor=(0.78, 0.99),
+            fontsize="small",
+            handlelength=3.0,
+        )
+    fig.tight_layout()
+    fig.savefig(output_path, bbox_inches="tight", pad_inches=0.02)
     plt.close(fig)
 
 
@@ -331,7 +433,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--angular-speed-threshold",
         type=float,
-        default=0.05,
+        default=0.1,
         help="Only compute angular errors where ground-truth speed exceeds this threshold [m/s].",
     )
     parser.add_argument(
@@ -387,6 +489,18 @@ def main() -> int:
         plot_path = output_dir / f"{metric_safe}_mean_by_samples.png"
         plot_metric(summary, metric, plot_path, args.band)
         print(f"Saved {metric} plot to: {plot_path}")
+
+    summary_by_metric = {
+        metric: summary
+        for metric, summary in zip(EVALUATION_METRICS, summaries)
+    }
+    combined_accuracy_path = output_dir / "angular_magnitude_mean_by_samples.pdf"
+    plot_combined_accuracy(
+        summary_by_metric["magnitude_mae_m_per_s"],
+        summary_by_metric["angular_error_mean_deg"],
+        combined_accuracy_path,
+    )
+    print(f"Saved combined angular/magnitude plot to: {combined_accuracy_path}")
     return 0
 
 

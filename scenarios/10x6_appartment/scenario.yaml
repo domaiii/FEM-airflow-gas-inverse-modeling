@@ -16,15 +16,15 @@ ground_truth_slicing:
   z_tol: 0.025
   max_xy_dist: 0.2
 ns_solver_parameters:
-  solver: minimum_residual
-  regularization: smooth
+  solver: linear_least_squares
+  regularization: value
   maxit: 25
   tol: 0.01
   damping: null
-  viscosity: 1.0e-5
-  weight_misfit: 1e0
-  weight_pde_res: 1e0
-  weight_reg: 1e-2
+  viscosity: 1.0e-05
+  weight_misfit: 100.0
+  weight_pde_res: 1.0
+  weight_reg: 1e-5
   weight_boundary: 1.0
 gmrf_parameters:
   cell_size: 0.2
@@ -37,7 +37,7 @@ gmrf_parameters:
   lambda_obstacles: 100.0
   num_iterations_MAP: 25
 gp_parameters:
-  length_scale: 0.25
+  length_scale: 0.35
   optimize_length_scale: false
   grid_cell_size: 0.2
 meta:
@@ -52,3 +52,5 @@ wind_sample_sizes:
 - 150
 - 175
 - 200
+- 225
+- 250

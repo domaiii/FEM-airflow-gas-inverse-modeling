@@ -43,13 +43,6 @@ SOLVERS: dict[str, SolverSpec] = {
         damping=None,
         uses_boundary_weight=False,
     ),
-    "weak_penalty": SolverSpec(
-        method_name="solve_weak_penalty",
-        maxit=25,
-        tol=1e-3,
-        damping=None,
-        uses_boundary_weight=True,
-    ),
     "linear_least_squares": SolverSpec(
         method_name="solve_linear_least_squares",
         maxit=25,
