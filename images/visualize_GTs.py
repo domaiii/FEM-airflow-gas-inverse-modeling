@@ -13,13 +13,20 @@ from matplotlib.ticker import MaxNLocator
 from matplotlib.transforms import Bbox
 from mpi4py import MPI
 from scipy.spatial import cKDTree
-
 from tools.csv_utilities import csv_to_function
+
+plt.rcParams.update({
+    "font.size": 13,
+    "axes.titlesize": 15,
+    "axes.labelsize": 12,
+    "xtick.labelsize": 11,
+    "ytick.labelsize": 11,
+})
 
 SLICE_HEIGHT = 0.025
 Z_TOL = 1e-1
 PLOT_MODE = 'streamplot'
-OUTPUT_PATH = Path(f'/app/wind_gt_10x6_all_{PLOT_MODE}.png')
+OUTPUT_PATH = Path(f'/app/wind_gt_10x6_2cases_{PLOT_MODE}.png')
 OUTPUT_PATH_PDF = OUTPUT_PATH.with_suffix('.pdf')
 SHOW_BOUNDARY_LEGEND = False
 COLORBAR_VMAX = 4.0
@@ -102,7 +109,7 @@ def add_boundary_facets(ax, domain, facet_tags, tag_styles: dict[int, dict]) -> 
 
         style = tag_styles.get(int(tag), {})
         color = style.get('color', 'black')
-        linewidth = style.get('linewidth', 1.6)
+        linewidth = style.get('linewidth', 1.9)
         segments = []
         for facet in facets:
             vertices = f2v.links(int(facet))
@@ -209,6 +216,7 @@ def streamplot_case(ax, case: dict, norm: Normalize):
     )
 
     ax.set_xlim(x_min, x_max)
+    ax.set_xlabel('x (m)')
     ax.set_ylim(y_min, y_max)
     ax.set_aspect('equal', adjustable='box')
     ax.set_title(case['title'])
