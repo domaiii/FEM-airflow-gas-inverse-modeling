@@ -28,6 +28,8 @@ def start_gmrf_launch(config):
             f"GMRF_lambdaPrior_obstacles:={config.gmrf_lambda_obstacles}",
             f"num_iterations_MAP:={config.gmrf_num_iterations_map}",
         ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
         text=True,
     )
 
