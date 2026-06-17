@@ -1,7 +1,7 @@
 [submodule "ros2/src/GMRF-wind"]
 	path = ros2/src/GMRF-wind
-	url = https://github.com/MAPIRlab/GMRF-wind.git
-	branch = ros2_cleaning_code
+	url = https://github.com/domaiii/GMRF-wind.git
+	branch = wind_comparison_experiments
 [submodule "ros2/src/olfaction_msgs"]
 	path = ros2/src/olfaction_msgs
 	url = https://github.com/MAPIRlab/olfaction_msgs.git
