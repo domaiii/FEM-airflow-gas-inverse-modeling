@@ -407,12 +407,14 @@ class AirflowEstimator:
     def solve_linear_least_squares(self,
                                    maxit: int = 10,
                                    tol: float = 1e-3,
+                                   damping: float | None = None,
                                    regularization: str | None = None,
                                    verbose: bool = False):
         solver = LinearLeastSquaresSolver(self._build_solver_context())
         result = solver.solve(
             maxit=maxit,
             tol=tol,
+            damping=damping,
             regularization=regularization,
             verbose=verbose,
         )
