@@ -3,7 +3,6 @@ import argparse
 import json
 import subprocess
 import sys
-import time
 
 TOOLS_DIR = Path(__file__).resolve().parents[2] / "tools"
 if str(TOOLS_DIR) not in sys.path:
@@ -13,7 +12,7 @@ import gmrf_client
 import rclpy
 from scenario import ScenarioConfig
 
-def start_gmrf_launch(config):
+def start_gmrf_launch(config, verbose: bool = False):
     return subprocess.Popen(
         [
             "ros2",
@@ -28,8 +27,8 @@ def start_gmrf_launch(config):
             f"GMRF_lambdaPrior_obstacles:={config.gmrf_lambda_obstacles}",
             f"num_iterations_MAP:={config.gmrf_num_iterations_map}",
         ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=None if verbose else subprocess.DEVNULL,
+        stderr=None if verbose else subprocess.DEVNULL,
         text=True,
     )
 
@@ -51,6 +50,12 @@ def count_csv_data_rows(path: Path) -> int:
 def parse() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("scenario", type=str)
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Show GMRF/ROS output, including Picard convergence messages.",
+    )
 
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("-s", "--samples", type=str, help="Path to one sample CSV.")
@@ -92,12 +97,11 @@ def run_case(config: ScenarioConfig, sample_file_csv: Path, sample_size: int,
             )
             return 1
 
-    estimation_start = time.perf_counter()
     res = node.query_estimation()
-    estimation_runtime_sec = time.perf_counter() - estimation_start
     if res is None:
         node.get_logger().error("WindEstimation query failed.")
         return 1
+    estimation_runtime_sec = res.estimation_runtime_sec
 
     out_csv = result_dir / "wind_estimate.csv"
     out_png = result_dir / "wind_estimate.png"
@@ -148,7 +152,7 @@ def main() -> int:
         if not sample_files:
             raise FileNotFoundError(f"No sample_points*.csv files found in {scenario_cfg.sample_dir}")
 
-    launch_gmrf_core = start_gmrf_launch(scenario_cfg)
+    launch_gmrf_core = start_gmrf_launch(scenario_cfg, verbose=args.verbose)
     rclpy.init()
     node = gmrf_client.GmrfClient()
 
