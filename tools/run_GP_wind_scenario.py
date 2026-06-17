@@ -51,7 +51,7 @@ def run_case(config: ScenarioConfig, sample_csv: Path, sample_size: int | None, 
     if config.occupancy_yaml is None:
         raise ValueError("GP wind estimation requires geometry.occupancy_yaml in the scenario config.")
 
-    result_dir = config.result_dir / "gp"
+    result_dir = config.result_dir / "GPR"
     if sample_size is not None:
         result_dir = result_dir / f"{sample_size}samples"
     result_dir = result_dir / sample_csv.stem
@@ -76,7 +76,7 @@ def run_case(config: ScenarioConfig, sample_csv: Path, sample_size: int | None, 
 
     metadata = {
         "scenario": config.name,
-        "estimator": "gp",
+        "estimator": "GPR",
         "sample_name": sample_csv.stem,
         "sample_size": sample_size if sample_size is not None else len(grid.measurements),
         "samples_csv": str(sample_csv),

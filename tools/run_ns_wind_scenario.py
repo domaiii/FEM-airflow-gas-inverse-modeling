@@ -17,6 +17,21 @@ from scenario import ScenarioConfig, infer_z_height
 from visualizer import Visualizer
 
 
+METHOD_NAMES_BY_SOLVER = {
+    "linear_least_squares": "WFNS",
+    "minimum_residual": "SFNS",
+}
+
+
+def method_name_for_solver(solver: str) -> str:
+    solver_name = solver.strip().lower()
+    try:
+        return METHOD_NAMES_BY_SOLVER[solver_name]
+    except KeyError as exc:
+        supported = ", ".join(sorted(METHOD_NAMES_BY_SOLVER))
+        raise ValueError(f"Unsupported solver {solver}, use one of: {supported}.") from exc
+
+
 @contextmanager
 def suppress_native_output():
     stdout_fd = os.dup(1)
@@ -58,6 +73,7 @@ def solve_estimator(estimator: AirflowEstimator, config: ScenarioConfig):
         return estimator.solve_linear_least_squares(
             maxit=config.maxit,
             tol=config.tol,
+            damping=config.damping,
             regularization=config.regularization,
             verbose=False,
         )
@@ -66,7 +82,7 @@ def solve_estimator(estimator: AirflowEstimator, config: ScenarioConfig):
     )
 
 def run_case(config: ScenarioConfig, sample_csv: Path, sample_size: int | None, verbose: bool) -> dict:
-    result_dir = config.result_dir / f"ns_{config.solver.strip().lower()}"
+    result_dir = config.result_dir / method_name_for_solver(config.solver)
     if sample_size is not None:
         result_dir = result_dir / f"{sample_size}samples"
     result_dir = result_dir / sample_csv.stem
@@ -131,7 +147,7 @@ def run_case(config: ScenarioConfig, sample_csv: Path, sample_size: int | None, 
 
     metadata = {
         "scenario": config.name,
-        "estimator": "ns",
+        "estimator": method_name_for_solver(config.solver),
         "sample_name": sample_csv.stem,
         "sample_size": sample_size if sample_size is not None else int(mapping_info["n_input_samples"]),
         "samples_csv": str(sample_csv),
@@ -210,7 +226,7 @@ def main() -> None:
 
     sample_sizes = config.wind_sample_sizes or (None,)
     rows = []
-    output_root = config.result_dir / f"ns_{config.solver.strip().lower()}"
+    output_root = config.result_dir / method_name_for_solver(config.solver)
     for sample_size in sample_sizes:
         for sample_csv in sample_files:
             if args.verbose:
