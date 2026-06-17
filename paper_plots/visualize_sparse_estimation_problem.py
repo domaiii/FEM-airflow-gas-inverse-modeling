@@ -211,8 +211,9 @@ def draw_estimator_connector(fig, axes) -> None:
     )
     fig.add_artist(label_box)
 
+    estimator_x = 0.5 * (x_left + x_right)
     fig.text(
-        0.5 * (x_left + x_right),
+        estimator_x,
         y_mid,
         "Estimator",
         ha="center",
@@ -221,6 +222,103 @@ def draw_estimator_connector(fig, axes) -> None:
         transform=fig.transFigure,
         zorder=22,
     )
+
+    prior_labels = ("Spatial\nSmoothness", "Domain\nGeometry", "Flow\nPhysics")
+    prior_box_width = 0.205
+    prior_box_height = 0.13
+    prior_gap = 0.06
+    prior_y = y_mid + 0.31
+    prior_centers = [
+        estimator_x + offset
+        for offset in (-(prior_box_width + prior_gap), 0.0, prior_box_width + prior_gap)
+    ]
+
+    for center_x, label in zip(prior_centers, prior_labels):
+        fig.text(
+            center_x,
+            prior_y + 0.02,
+            label,
+            ha="center",
+            va="center",
+            fontsize=7.2,
+            linespacing=1.0,
+            transform=fig.transFigure,
+            zorder=22,
+        )
+
+    join_y = prior_y - 0.075
+    collector_left = prior_centers[0] - 0.5 * prior_box_width
+    collector_right = prior_centers[-1] + 0.5 * prior_box_width
+    collector_rise = 0.035
+    collector_path = MplPath(
+        [
+            (collector_left, join_y + collector_rise),
+            (collector_left, join_y),
+            (collector_right, join_y),
+            (collector_right, join_y + collector_rise),
+        ],
+        [
+            MplPath.MOVETO,
+            MplPath.LINETO,
+            MplPath.LINETO,
+            MplPath.LINETO,
+        ],
+    )
+    fig.add_artist(FancyArrowPatch(
+        path=collector_path,
+        transform=fig.transFigure,
+        arrowstyle="-",
+        color="black",
+        linewidth=0.8,
+        capstyle="projecting",
+        joinstyle="miter",
+        clip_on=False,
+        zorder=20,
+    ))
+
+    fig.text(
+        estimator_x + 0.03,
+        0.5 * (join_y + box_y + box_height),
+        "Estimator-specific priors",
+        ha="left",
+        va="center",
+        fontsize=6.2,
+        linespacing=1.0,
+        transform=fig.transFigure,
+        zorder=22,
+    )
+
+    arrow_end_y = box_y + box_height
+    arrowhead_start_y = arrow_end_y + 0.018
+
+    fig.add_artist(FancyArrowPatch(
+        (estimator_x, join_y),
+        (estimator_x, arrowhead_start_y),
+        transform=fig.transFigure,
+        arrowstyle="-",
+        color="black",
+        linewidth=0.9,
+        linestyle="--",
+        capstyle="butt",
+        clip_on=False,
+        zorder=20,
+    ))
+    fig.add_artist(FancyArrowPatch(
+        (estimator_x, arrowhead_start_y),
+        (estimator_x, arrow_end_y),
+        transform=fig.transFigure,
+        arrowstyle="-|>",
+        mutation_scale=7,
+        color="black",
+        linewidth=0.9,
+        linestyle="-",
+        capstyle="butt",
+        joinstyle="miter",
+        shrinkA=0,
+        shrinkB=0,
+        clip_on=False,
+        zorder=20,
+    ))
 
 
 def add_panel_labels(fig, axes) -> None:
@@ -260,7 +358,7 @@ def main() -> None:
     fig.subplots_adjust(
         left=0.005,
         right=0.995,
-        bottom=0.115,
+        bottom=0.135,
         top=0.72,
         wspace=0.00,
     )

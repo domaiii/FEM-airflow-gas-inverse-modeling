@@ -14,12 +14,12 @@ from scipy.interpolate import griddata
 
 SCENARIO = Path("/app/scenarios/10x6_appartment")
 MESH = SCENARIO / "geometry/appartment_2d.msh"
-SAMPLES = SCENARIO / "samples/sample_points_n400_seed6.csv"
+SAMPLES = SCENARIO / "samples/sample_points_n400_seed0.csv"
 RESULTS = SCENARIO / "results/NSRM"
 RUN = "sample_points_n400_seed0"
-OUT = Path("/app/images/estimation_increasing_samples_sequence.pdf")
+OUT = Path("/app/paper_plots/estimation_increasing_samples_sequence.pdf")
 
-SAMPLE_COLOR = "#00B615FE"
+SAMPLE_COLOR = "#FFFFFFFF"
 
 
 def add_boundaries(ax, domain, tags):
@@ -91,13 +91,16 @@ def draw_panel(ax, title, U, V, speed, xg, yg, domain, tags, samples=None):
     add_boundaries(ax, domain, tags)
 
     if samples is not None:
+        
         ax.scatter(
-            samples["x"], samples["y"],
-            marker="o",
-            s=8,
-            linewidths=1.3,
-            color=SAMPLE_COLOR,
-            zorder=6,
+            samples["x"],
+            samples["y"],
+            marker="*",
+            s=72,                    # Fläche statt markersize
+            facecolors="#000000",
+            edgecolors="#FFFFFF",
+            linewidths=0.6,
+            zorder=1,
         )
 
     ax.set_title(title, fontsize=10, pad=3)

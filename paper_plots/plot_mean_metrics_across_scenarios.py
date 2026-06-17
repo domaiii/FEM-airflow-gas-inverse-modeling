@@ -4,6 +4,7 @@ import matplotlib
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
 SUMMARY_PATHS = [
@@ -11,7 +12,7 @@ SUMMARY_PATHS = [
     Path("/app/scenarios/10x6_labyrinth/eval/metrics_summary.csv"),
     Path("/app/scenarios/10x6_multiple_obstacles/eval/metrics_summary.csv"),
 ]
-OUTPUT_PATH = Path("/app/images/mean_metrics_across_scenarios.pdf")
+OUTPUT_PATH = Path("/app/noisy_plot.pdf")
 
 
 def load_summaries() -> pd.DataFrame:
@@ -44,14 +45,6 @@ def metric_values(summary: pd.DataFrame, metric: str, method: str) -> pd.DataFra
 def main() -> None:
     raw = load_summaries()
     summary = mean_over_scenarios(raw)
-    plotted = summary[
-        summary["metric"].isin([
-            "angular_error_mean_deg",
-            "magnitude_mae_m_per_s",
-        ])
-    ].sort_values(["metric", "sample_size"])
-
-    print(plotted.to_string(index=False))
     methods = sorted(summary["method"].unique())
     colors = method_colors(methods)
 
@@ -63,7 +56,7 @@ def main() -> None:
         "legend.fontsize": 7,
     })
 
-    fig, ax_ang = plt.subplots(figsize=(4.4, 4), dpi=300)
+    fig, ax_ang = plt.subplots(figsize=(4.6, 3.7), dpi=300)
     ax_mag = ax_ang.twinx()
 
     angular_handles = []
@@ -105,15 +98,16 @@ def main() -> None:
         magnitude_handles.append(line)
         magnitude_labels.append(method)
 
-    max_ang = pd.to_numeric(summary.loc[summary["metric"] == "angular_error_mean_deg", "mean"], errors="coerce").max()
-    max_mag = pd.to_numeric(summary.loc[summary["metric"] == "magnitude_mae_m_per_s", "mean"], errors="coerce").max()
+    ax_ang.set_ylim(10.0, 100.0)
+    ax_ang.set_yticks(np.arange(10.0, 101.0, 10.0))
 
-    ax_ang.set_ylim(10.0, 90)
-    ax_mag.set_ylim(0.0, max_mag * 1.05)
+    ax_mag.set_ylim(0.1, 1.0)
+    ax_mag.set_yticks(np.arange(0.1, 1.01, 0.1))
+
     ax_ang.set_xlabel("Number of Measurements")
     ax_ang.set_ylabel("Mean Angular Error [deg]")
     ax_mag.set_ylabel("Mean Magnitude Error [m/s]")
-    ax_ang.grid(True, alpha=0.28, linewidth=0.5)
+    ax_ang.grid(axis="y", alpha=0.28, linewidth=0.5)
     ax_ang.tick_params(axis="both", labelsize=7)
     ax_mag.tick_params(axis="y", labelsize=7)
 
