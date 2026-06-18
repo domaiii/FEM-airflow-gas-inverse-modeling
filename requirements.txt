@@ -1,11 +1,7 @@
+adios4dolfinx
+imageio>=2.31,<3
 jupyterlab
 pandas
-pygmsh
-scipy
-scikit-learn
-torch
 pyvista
-adios4dolfinx
-opencv-python
-imageio>=2.31,<3
-pyt
+pyyaml
+scipy
