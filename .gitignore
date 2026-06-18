@@ -1,15 +1,7 @@
-*.h5
-*.xdmf
 __pycache__
-*.gif
 *.png
 *.DS_Store
 .vscode/
 *.DS_Store
-build/
-install/
-log/
-ros2/results/
 **/results/
-csv_wind_data/10x6_central_obstacle/csv_wind_sample_sets/
 *.pdf
