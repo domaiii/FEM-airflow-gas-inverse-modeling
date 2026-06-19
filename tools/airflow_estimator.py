@@ -36,7 +36,7 @@ class AirflowMeasurements:
                 )
             df = df.iloc[:count].copy()
 
-        required = ["x", "y", "wind_x", "wind_y"]
+        required = ["Points:0", "Points:1", "U:0", "U:1"]
         missing = [c for c in required if c not in df.columns]
         if missing:
             raise ValueError(
@@ -46,8 +46,8 @@ class AirflowMeasurements:
         if len(df) == 0:
             raise ValueError(f"No sample rows found in {samples_csv}")
 
-        samples_xy = df[["x", "y"]].to_numpy(dtype=float)
-        samples_uv = df[["wind_x", "wind_y"]].to_numpy(dtype=float, copy=True)
+        samples_xy = df[["Points:0", "Points:1"]].to_numpy(dtype=float)
+        samples_uv = df[["U:0", "U:1"]].to_numpy(dtype=float, copy=True)
         
         if noise_std is not None: 
             samples_uv += np.random.normal(0, noise_std, (len(df), 2))
@@ -475,7 +475,7 @@ class AirflowEstimator:
         """
         Load wind samples from CSV and map them to nearest velocity nodes.
 
-        Expected CSV columns: x, y, wind_x, wind_y.
+        Expected CSV columns: Points:0, Points:1, U:0, U:1.
 
         Parameters
         ----------

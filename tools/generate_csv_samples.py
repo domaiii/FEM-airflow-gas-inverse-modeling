@@ -5,25 +5,25 @@ import numpy as np
 import pandas as pd
 
 
-REQUIRED_COLS = ["Points:0", "Points:1", "Points:2", "U:0", "U:1", "U:2"]
-SINGLE_LAYER_Z_SPAN = 0.1
+WIND_FIELD_COLUMNS = ["Points:0", "Points:1", "Points:2", "U:0", "U:1", "U:2"]
 DEFAULT_Z_TOL = 0.05
+SINGLE_LAYER_Z_SPAN = 0.1
 
 
-def load_wind_rows(wind_csv: str | Path) -> tuple[Path, pd.DataFrame]:
-    wind_csv = Path(wind_csv).resolve()
-    if not wind_csv.exists():
-        raise FileNotFoundError(f"Wind CSV not found: {wind_csv}")
+def load_wind_field_csv(path: str | Path) -> tuple[Path, pd.DataFrame]:
+    path = Path(path).resolve()
+    if not path.exists():
+        raise FileNotFoundError(f"Wind CSV not found: {path}")
 
-    df = pd.read_csv(wind_csv)
-    missing = [c for c in REQUIRED_COLS if c not in df.columns]
+    rows = pd.read_csv(path)
+    missing = [column for column in WIND_FIELD_COLUMNS if column not in rows.columns]
     if missing:
-        raise ValueError(f"Missing required columns in {wind_csv.name}: {missing}.")
+        raise ValueError(f"Missing required columns in {path.name}: {missing}.")
 
-    return wind_csv, df[REQUIRED_COLS].copy()
+    return path, rows[WIND_FIELD_COLUMNS].copy()
 
 
-def select_z_slice(rows: pd.DataFrame, z_height: float | None) -> pd.DataFrame:
+def select_z_slice(rows: pd.DataFrame, z_height: float | None, z_tol: float) -> pd.DataFrame:
     z = rows["Points:2"].to_numpy(dtype=float)
     z_min = float(np.min(z))
     z_max = float(np.max(z))
@@ -36,51 +36,39 @@ def select_z_slice(rows: pd.DataFrame, z_height: float | None) -> pd.DataFrame:
             f"Observed z-range is [{z_min:.6g}, {z_max:.6g}]."
         )
 
-    sliced = rows[np.abs(z - z_height) <= DEFAULT_Z_TOL]
-    if len(sliced) == 0:
+    sliced = rows[np.abs(z - z_height) <= z_tol]
+    if sliced.empty:
         raise ValueError(
-            f"No rows found within +/- {DEFAULT_Z_TOL} m of z={z_height}. "
+            f"No rows found within +/- {z_tol} m of z={z_height}. "
             f"Observed z-range is [{z_min:.6g}, {z_max:.6g}]."
         )
     return sliced
 
 
-def sample_rows(rows: pd.DataFrame, n_points: int, seed: int) -> pd.DataFrame:
-    if n_points <= 0:
-        raise ValueError("n_points must be > 0.")
-    if len(rows) < n_points:
+def sample_wind_measurements(rows: pd.DataFrame, n_samples: int, seed: int) -> pd.DataFrame:
+    if n_samples <= 0:
+        raise ValueError("n_samples must be > 0.")
+    if len(rows) < n_samples:
         raise ValueError(
-            f"Requested n_points={n_points}, but only {len(rows)} valid rows available."
+            f"Requested n_samples={n_samples}, but only {len(rows)} valid rows available."
         )
 
     rng = np.random.default_rng(seed)
-    sample_idx = rng.choice(len(rows), size=n_points, replace=False)
-    sampled = rows.iloc[sample_idx].reset_index(drop=True)
-
-    return pd.DataFrame(
-        {
-            "sample_id": np.arange(n_points, dtype=np.int32),
-            "x": sampled["Points:0"].to_numpy(),
-            "y": sampled["Points:1"].to_numpy(),
-            "z": sampled["Points:2"].to_numpy(),
-            "wind_x": sampled["U:0"].to_numpy(),
-            "wind_y": sampled["U:1"].to_numpy(),
-            "wind_z": sampled["U:2"].to_numpy(),
-        }
-    )
+    sample_idx = rng.choice(len(rows), size=n_samples, replace=False)
+    return rows.iloc[sample_idx].reset_index(drop=True)
 
 
-def main() -> None:
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="generate_csv_samples",
-        description="Create one or more sample CSV files from a wind ground-truth CSV.",
+        description="Create sample CSV files from a wind field CSV.",
     )
-    parser.add_argument("input_csv", type=str, help="Path to the ground-truth wind CSV.")
+    parser.add_argument("input_csv", type=str, help="Path to the wind field CSV.")
     parser.add_argument(
         "-n", "--n-samples",
         type=int,
         required=True,
-        help="Number of samples per generated CSV.",
+        help="Number of measurements per generated sample CSV.",
     )
     parser.add_argument(
         "-s", "--n-sets",
@@ -98,24 +86,33 @@ def main() -> None:
         "-z", "--z-height",
         type=float,
         default=None,
-        help="Optional z-height of the slice to sample from (not necessary for 2D input data).",
+        help="Optional z-height of the slice to sample from.",
+    )
+    parser.add_argument(
+        "--z-tol",
+        type=float,
+        default=DEFAULT_Z_TOL,
+        help=f"Tolerance around --z-height. Defaults to {DEFAULT_Z_TOL}.",
     )
     parser.add_argument("-v", "--verbose", action="store_true")
+    return parser.parse_args()
 
-    args = parser.parse_args()
 
-    wind_csv, rows = load_wind_rows(args.input_csv)
-    rows = select_z_slice(rows, args.z_height)
+def main() -> None:
+    args = parse_args()
+    wind_csv, rows = load_wind_field_csv(args.input_csv)
+    rows = select_z_slice(rows, args.z_height, args.z_tol)
 
     output_dir = wind_csv.parent if args.output_dir is None else Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
     for seed in range(args.n_sets):
-        sampled = sample_rows(rows, args.n_samples, seed)
+        sampled = sample_wind_measurements(rows, args.n_samples, seed)
         out_path = output_dir / f"sample_points_n{args.n_samples}_seed{seed}.csv"
         sampled.to_csv(out_path, index=False)
         if args.verbose:
-            print(f"Saved sample set with {args.n_samples} samples to {out_path}")
+            print(f"Saved {args.n_samples} measurements to {out_path}")
+
 
 if __name__ == "__main__":
     main()
