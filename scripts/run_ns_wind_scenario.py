@@ -1,4 +1,5 @@
 import argparse
+import sys
 from contextlib import contextmanager
 import json
 import os
@@ -10,9 +11,13 @@ import numpy as np
 from dolfinx import fem
 import dolfinx.io as dio
 from mpi4py import MPI
-from airflow_estimator import AirflowEstimator
-from scenario import ScenarioConfig
-from visualizer import plot_wind_csv
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from NS_wind_est.airflow_estimator import AirflowEstimator
+from NS_wind_est.scenario import ScenarioConfig
+from NS_wind_est.visualizer import plot_wind_csv
 
 
 def match_boundary_names(name_to_id: dict[str, int], pattern: str) -> list[str]:
