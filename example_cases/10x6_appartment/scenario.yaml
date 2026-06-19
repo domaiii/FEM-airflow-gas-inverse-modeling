@@ -1,32 +1,29 @@
-name: 10x6_appartment
+meta:
+  name: 10x6_appartment
+  description: 10x6 appartment with multiple rooms/doors/windows
 geometry:
-  mesh: geometry/appartment_2d_very_coarse.msh
   wall_pattern: wall|obstacle
   outflow_pattern: outlet|outflow
-data:
+paths:
+  mesh: geometry/appartment_2d_very_coarse.msh
   wind_csv: wind_gt.csv
   sample_dir: samples
   result_dir: results
-measurement_noise:
-  wind_noise_std: 0.1
-ground_truth_slicing:
+wind_measurements:
+  sample_sizes: [25, 50, 100]
+  add_gaussian_noise_std: 0.1
+gt_wind_mapping:
   z_height: 0.025
   z_tol: 0.025
   max_xy_dist: 0.2
 ns_solver_parameters:
-  solver: minimum_residual
+  solver: SFNS
   regularization: smooth
   maxit: 25
-  tol: 0.01
+  solver_sol: 0.01
   damping: 0.5
   viscosity: 1.0e-05
   weight_misfit: 10.0
   weight_pde_res: 1.0
   weight_reg: 1e-2
   weight_boundary: 1.0
-meta:
-  description: 10x6 appartment with multiple rooms/doors/windows
-wind_sample_sizes:
-- 25
-- 50
-- 100

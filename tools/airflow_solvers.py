@@ -39,13 +39,13 @@ class BaseAirflowSolver(ABC):
             "converged": False,
             "iterations": 0,
             "max_iterations": 0,
-            "tolerance": float("nan"),
+            "solver_tolerance": float("nan"),
             "final_relative_change": float("nan"),
         }
 
     def solve(self,
               maxit: int,
-              tol: float,
+              solver_tol: float,
               damping: float | None = None,
               regularization: str | None = None,
               verbose: bool = False):
@@ -69,7 +69,7 @@ class BaseAirflowSolver(ABC):
             final_diff = float(diff)
             # if verbose:
             #    self._report_iteration(k, diff, wh, reg_mode, context)
-            if diff < tol:
+            if diff < solver_tol:
                 converged = True
                 break
 
@@ -82,7 +82,7 @@ class BaseAirflowSolver(ABC):
             "converged": converged,
             "iterations": iterations,
             "max_iterations": int(maxit),
-            "tolerance": float(tol),
+            "solver_tolerance": float(solver_tol),
             "final_relative_change": final_diff,
         }
 

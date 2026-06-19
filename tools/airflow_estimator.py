@@ -141,7 +141,7 @@ class AirflowEstimator:
         self.weight_misfit = 1e2
         self.weight_pde_res = 1e0
         self.weight_reg = 1e-2
-        self.weight_boundary = 1e4
+        self.weight_boundary = 1e0
         self.regularization_mode = "smooth"
 
         self.bcs: list[fem.DirichletBC] = []
@@ -386,16 +386,16 @@ class AirflowEstimator:
             regularization_mode=self.regularization_mode,
         )
 
-    def solve_minimum_residual(self,
+    def solve_SFNS(self,
                                maxit: int = 10,
-                               tol: float = 1e-2,
+                               solver_tol: float = 1e-2,
                                damping: float | None = None,
                                regularization: str | None = None,
                                verbose: bool = False):
         solver = MinimumResidualSolver(self._build_solver_context())
         result = solver.solve(
             maxit=maxit,
-            tol=tol,
+            solver_tol=solver_tol,
             damping=damping,
             regularization=regularization,
             verbose=verbose,
@@ -404,16 +404,16 @@ class AirflowEstimator:
         self.w_final = result
         return result
 
-    def solve_linear_least_squares(self,
+    def solve_WFNS(self,
                                    maxit: int = 10,
-                                   tol: float = 1e-3,
+                                   solver_tol: float = 1e-3,
                                    damping: float | None = None,
                                    regularization: str | None = None,
                                    verbose: bool = False):
         solver = LinearLeastSquaresSolver(self._build_solver_context())
         result = solver.solve(
             maxit=maxit,
-            tol=tol,
+            solver_tol=solver_tol,
             damping=damping,
             regularization=regularization,
             verbose=verbose,

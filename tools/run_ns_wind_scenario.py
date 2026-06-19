@@ -17,21 +17,6 @@ from scenario import ScenarioConfig, infer_z_height
 from visualizer import Visualizer
 
 
-METHOD_NAMES_BY_SOLVER = {
-    "linear_least_squares": "WFNS",
-    "minimum_residual": "SFNS",
-}
-
-
-def method_name_for_solver(solver: str) -> str:
-    solver_name = solver.strip().lower()
-    try:
-        return METHOD_NAMES_BY_SOLVER[solver_name]
-    except KeyError as exc:
-        supported = ", ".join(sorted(METHOD_NAMES_BY_SOLVER))
-        raise ValueError(f"Unsupported solver {solver}, use one of: {supported}.") from exc
-
-
 @contextmanager
 def suppress_native_output():
     stdout_fd = os.dup(1)
@@ -48,7 +33,6 @@ def suppress_native_output():
         os.close(stderr_fd)
 
 
-
 def match_boundary_names(name_to_id: dict[str, int], pattern: str) -> list[str]:
     regex = re.compile(pattern, re.IGNORECASE)
     return [name for name in name_to_id if regex.search(name)]
@@ -60,32 +44,41 @@ def save_velocity_csv(path: Path, velocity: fem.Function) -> None:
     np.savetxt(path, data, delimiter=",", header="x,y,wind_x,wind_y", comments="")
 
 def solve_estimator(estimator: AirflowEstimator, config: ScenarioConfig):
-    solver_name = config.solver.strip().lower()
-    if solver_name == "minimum_residual":
-        return estimator.solve_minimum_residual(
+    solver_name = config.solver.strip().upper()
+    if solver_name == "SFNS":
+        return estimator.solve_SFNS(
             maxit=config.maxit,
-            tol=config.tol,
+            solver_tol=config.solver_tol,
             damping=config.damping,
             regularization=config.regularization,
             verbose=False,
         )
-    if solver_name == "linear_least_squares":
-        return estimator.solve_linear_least_squares(
+    if solver_name == "WFNS":
+        return estimator.solve_WFNS(
             maxit=config.maxit,
-            tol=config.tol,
+            solver_tol=config.solver_tol,
             damping=config.damping,
             regularization=config.regularization,
             verbose=False,
         )
     raise ValueError(
-        f"Unsupported solver {config.solver}, use one of: minimum_residual, linear_least_squares."
+        f"Unsupported solver {config.solver}, use one of: SFNS, WFNS."
     )
 
-def run_case(config: ScenarioConfig, sample_csv: Path, sample_size: int | None, verbose: bool) -> dict:
-    result_dir = config.result_dir / method_name_for_solver(config.solver)
-    if sample_size is not None:
+def run_case(
+    config: ScenarioConfig,
+    sample_csv: Path,
+    output_dir: Path,
+    sample_size: int | None,
+    use_sample_size_subdirs: bool,
+    use_sample_file_subdirs: bool,
+    verbose: bool,
+) -> dict:
+    result_dir = output_dir
+    if use_sample_size_subdirs and sample_size is not None:
         result_dir = result_dir / f"{sample_size}samples"
-    result_dir = result_dir / sample_csv.stem
+    if use_sample_file_subdirs:
+        result_dir = result_dir / sample_csv.stem
     result_dir.mkdir(parents=True, exist_ok=True)
 
     with suppress_native_output():
@@ -126,7 +119,7 @@ def run_case(config: ScenarioConfig, sample_csv: Path, sample_size: int | None, 
     mapping_info = estimator.set_measurements_from_csv(
         sample_csv,
         count=sample_size,
-        noise_std=config.wind_noise_std,
+        noise_std=config.add_gaussian_noise_std,
         max_xy_dist=config.max_xy_dist,
     )
     estimation_start = time.perf_counter()
@@ -147,13 +140,13 @@ def run_case(config: ScenarioConfig, sample_csv: Path, sample_size: int | None, 
 
     metadata = {
         "scenario": config.name,
-        "estimator": method_name_for_solver(config.solver),
+        "estimator": config.solver,
         "sample_name": sample_csv.stem,
         "sample_size": sample_size if sample_size is not None else int(mapping_info["n_input_samples"]),
         "samples_csv": str(sample_csv),
         "mesh": str(config.mesh),
         "wind_csv": str(config.wind_csv),
-        "wind_noise_std": str(config.wind_noise_std),
+        "add_gaussian_noise_std": str(config.add_gaussian_noise_std),
         "solver": config.solver,
         "regularization": config.regularization,
         "maxit": config.maxit,
@@ -224,17 +217,30 @@ def main() -> None:
         if not sample_files:
             raise FileNotFoundError(f"No sample_points*.csv files found in {config.sample_dir}")
 
-    sample_sizes = config.wind_sample_sizes or (None,)
-    rows = []
-    output_root = config.result_dir / method_name_for_solver(config.solver)
+    sample_sizes = config.wind_measurement_counts or (None,)
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    output_root = config.result_dir / f"{config.solver}-{timestamp}"
+    use_sample_size_subdirs = len(sample_sizes) > 1
+    use_sample_file_subdirs = len(sample_files) > 1
+    n_runs = 0
+
     for sample_size in sample_sizes:
         for sample_csv in sample_files:
             if args.verbose:
-                label = f" with first {sample_size} samples" if sample_size is not None else ""
-                print(f"Running NS wind for {sample_csv.name}{label}")
-            rows.append(run_case(config, sample_csv, sample_size, args.verbose))
+                label = f" with {sample_size} samples" if sample_size is not None else ""
+                print(f"Running {config.solver} for {sample_csv.name}{label}")
+            run_case(
+                config,
+                sample_csv,
+                output_root,
+                sample_size,
+                use_sample_size_subdirs,
+                use_sample_file_subdirs,
+                args.verbose,
+            )
+            n_runs += 1
 
-    print(f"Saved {len(rows)} NS runs under: {output_root}")
+    print(f"Saved {n_runs} NS runs under: {output_root}")
 
 
 if __name__ == "__main__":
