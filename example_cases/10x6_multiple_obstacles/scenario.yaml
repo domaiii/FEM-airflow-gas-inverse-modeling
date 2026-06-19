@@ -1,8 +1,6 @@
 name: 10x6_multiple_obstacles
 geometry:
   mesh: geometry/multiple_obstacles_2d_very_coarse.msh
-  occupancy_yaml: geometry/occupancy.yaml
-  occupancy_image: geometry/occupancy.pgm
   wall_pattern: wall|obstacle
   outflow_pattern: outlet|outflow
 data:
@@ -26,30 +24,9 @@ ns_solver_parameters:
   weight_pde_res: 1.0
   weight_reg: 1e-2
   weight_boundary: 1.0
-gmrf_parameters:
-  cell_size: 0.2
-  var_speed: 0.01
-  var_direction: 0.01
-  batch_size: 250
-  lambda_advection: 1.0
-  lambda_mass_conservation: 100.0
-  lambda_diffusion: 1.0
-  lambda_obstacles: 100.0
-  num_iterations_MAP: 25
-gp_parameters:
-  length_scale: 0.3
-  optimize_length_scale: false
 meta:
   description: 10x6 m room with multiple in- and outlets and tree rectangular obstacles.
 wind_sample_sizes:
-- 10  
 - 25
 - 50
-- 75
 - 100
-- 125
-- 150
-- 175
-- 200
-- 225
-- 250

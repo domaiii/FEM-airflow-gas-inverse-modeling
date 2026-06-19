@@ -43,18 +43,6 @@ class ScenarioConfig:
     weight_pde_res: float = 1.0
     weight_reg: float = 1e-2
     weight_boundary: float = 1e4
-    gmrf_cell_size: float = 0.25
-    variance_speed: float = 0.01
-    variance_direction: float = 0.01
-    batch_size: int = 50
-    gmrf_lambda_advection: float = 10.0
-    gmrf_lambda_mass_conservation: float = 100.0
-    gmrf_lambda_diffusion: float = 0.0001
-    gmrf_lambda_obstacles: float = 100.0
-    gmrf_num_iterations_map: int = 25
-    gp_length_scale: float = 1.0
-    gp_optimize_length_scale: bool = True
-    gp_grid_cell_size: float | None = None
 
     @classmethod
     def load(cls, scenario: str | Path) -> "ScenarioConfig":
@@ -71,16 +59,12 @@ class ScenarioConfig:
         noise = raw.get("measurement_noise", {})
         slicing = raw.get("ground_truth_slicing", {})
         solver = raw.get("ns_solver_parameters", {})
-        gmrf = raw.get("gmrf_parameters", {})
-        gp = raw.get("gp_parameters", {})
         damping = solver.get("damping", cls.damping)
 
         return cls(
             name=str(raw["name"]),
             root=root,
             mesh=_optional_path(root, geometry.get("mesh")),
-            occupancy_yaml=_optional_path(root, geometry.get("occupancy_yaml")),
-            occupancy_image=_optional_path(root, geometry.get("occupancy_image")),
             wall_pattern=str(geometry.get("wall_pattern", cls.wall_pattern)),
             outflow_pattern=str(geometry.get("outflow_pattern", cls.outflow_pattern)),
             wind_csv=(root / data["wind_csv"]).resolve(),
@@ -100,24 +84,7 @@ class ScenarioConfig:
             weight_misfit=float(solver.get("weight_misfit", cls.weight_misfit)),
             weight_pde_res=float(solver.get("weight_pde_res", cls.weight_pde_res)),
             weight_reg=float(solver.get("weight_reg", cls.weight_reg)),
-            weight_boundary=float(solver.get("weight_boundary", cls.weight_boundary)),
-            gmrf_cell_size=float(gmrf.get("cell_size", cls.gmrf_cell_size)),
-            variance_speed=float(gmrf.get("var_speed", cls.variance_speed)),
-            variance_direction=float(gmrf.get("var_direction", cls.variance_direction)),
-            batch_size=int(gmrf.get("batch_size", cls.batch_size)),
-            gmrf_lambda_advection=float(gmrf.get("lambda_advection", cls.gmrf_lambda_advection)),
-            gmrf_lambda_mass_conservation=float(
-                gmrf.get("lambda_mass_conservation", cls.gmrf_lambda_mass_conservation)
-            ),
-            gmrf_lambda_diffusion=float(gmrf.get("lambda_diffusion", cls.gmrf_lambda_diffusion)),
-            gmrf_lambda_obstacles=float(gmrf.get("lambda_obstacles", cls.gmrf_lambda_obstacles)),
-            gmrf_num_iterations_map=int(gmrf.get("num_iterations_MAP", cls.gmrf_num_iterations_map)),
-            gp_length_scale=float(gp.get("length_scale", cls.gp_length_scale)),
-            gp_optimize_length_scale=bool(gp.get("optimize_length_scale", cls.gp_optimize_length_scale)),
-            gp_grid_cell_size=(
-                None if gp.get("grid_cell_size", cls.gp_grid_cell_size) is None
-                else float(gp["grid_cell_size"])
-            ),
+            weight_boundary=float(solver.get("weight_boundary", cls.weight_boundary))
         )
 
 
