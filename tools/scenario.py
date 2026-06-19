@@ -102,7 +102,7 @@ class ScenarioConfig:
             solver=str(solver.get("solver", cls.solver)),
             regularization=str(solver.get("regularization", cls.regularization)),
             maxit=int(solver.get("maxit", cls.maxit)),
-            solver_tol=float(solver.get("tol", cls.tol)),
+            solver_tol=float(solver.get("solver_tol", solver.get("tol", cls.solver_tol))),
             damping=None if damping is None else float(damping),
             viscosity=float(solver.get("viscosity", cls.viscosity)),
             weight_misfit=float(solver.get("weight_misfit", cls.weight_misfit)),
