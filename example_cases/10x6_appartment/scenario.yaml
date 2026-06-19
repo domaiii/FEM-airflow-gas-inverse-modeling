@@ -5,7 +5,7 @@ geometry:
   wall_pattern: wall|obstacle
   outflow_pattern: outlet|outflow
 paths:
-  mesh: geometry/appartment_2d_very_coarse.msh
+  mesh: geometry/appartment_2d_coarse.msh
   wind_csv: wind_gt.csv
   sample_dir: samples
   result_dir: results
