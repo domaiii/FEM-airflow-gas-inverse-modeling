@@ -7,41 +7,68 @@ import time
 from pathlib import Path
 
 import numpy as np
-from basix.ufl import element
 from dolfinx import fem
 import dolfinx.io as dio
 from mpi4py import MPI
 from airflow_estimator import AirflowEstimator
-from csv_utilities import csv_to_function
-from scenario import ScenarioConfig, infer_z_height
+from scenario import ScenarioConfig
 from visualizer import Visualizer
-
-
-@contextmanager
-def suppress_native_output():
-    stdout_fd = os.dup(1)
-    stderr_fd = os.dup(2)
-    try:
-        with open(os.devnull, "w", encoding="utf-8") as devnull:
-            os.dup2(devnull.fileno(), 1)
-            os.dup2(devnull.fileno(), 2)
-            yield
-    finally:
-        os.dup2(stdout_fd, 1)
-        os.dup2(stderr_fd, 2)
-        os.close(stdout_fd)
-        os.close(stderr_fd)
 
 
 def match_boundary_names(name_to_id: dict[str, int], pattern: str) -> list[str]:
     regex = re.compile(pattern, re.IGNORECASE)
     return [name for name in name_to_id if regex.search(name)]
 
+
 def save_velocity_csv(path: Path, velocity: fem.Function) -> None:
     coords = velocity.function_space.tabulate_dof_coordinates()[:, :2]
     values = velocity.x.array.reshape(-1, velocity.function_space.dofmap.bs)
     data = np.column_stack([coords[:, 0], coords[:, 1], values[:, 0], values[:, 1]])
     np.savetxt(path, data, delimiter=",", header="x,y,wind_x,wind_y", comments="")
+
+
+def create_estimator(config: ScenarioConfig) -> AirflowEstimator:
+    domain, _, facet_tags = dio.gmshio.read_from_msh(str(config.mesh), MPI.COMM_WORLD, gdim=2)
+    estimator = AirflowEstimator.from_domain(domain, facet_tags, meshfile=config.mesh)
+
+    wall_names = match_boundary_names(estimator._boundary_name_to_id, config.wall_pattern)
+    if wall_names:
+        estimator.set_no_slip_bc(wall_names)
+
+    outflow_names = match_boundary_names(estimator._boundary_name_to_id, config.outflow_pattern)
+    if not outflow_names:
+        raise ValueError(
+            f"No outflow boundaries matched pattern {config.outflow_pattern!r} in {config.mesh.name}."
+        )
+    estimator.set_zero_pressure_bc(outflow_names)
+
+    estimator.set_regularization(config.regularization)
+    estimator.set_weights(
+        kin_v=config.viscosity,
+        misfit=config.weight_misfit,
+        pde_err=config.weight_pde_res,
+        reg=config.weight_reg,
+        boundary=config.weight_boundary,
+    )
+    return estimator
+
+def write_outputs(result_dir: Path, velocity: fem.Function, metadata: dict) -> None:
+    estimate_path = result_dir / "wind_estimate.csv"
+    plot_path = result_dir / "wind_estimate.png"
+    metadata_path = result_dir / "metadata_wind_est.json"
+
+    save_velocity_csv(estimate_path, velocity)
+    Visualizer.plot_wind_2Dcsv(
+        estimate_path,
+        output_path=plot_path,
+        title="NS wind estimate",
+        show=False,
+    )
+    metadata["wind_estimate_csv"] = str(estimate_path)
+    metadata["wind_estimate_png"] = str(plot_path)
+    with metadata_path.open("w", encoding="utf-8") as f:
+        json.dump(metadata, f, indent=2)
+
 
 def solve_estimator(estimator: AirflowEstimator, config: ScenarioConfig):
     solver_name = config.solver.strip().upper()
@@ -65,56 +92,16 @@ def solve_estimator(estimator: AirflowEstimator, config: ScenarioConfig):
         f"Unsupported solver {config.solver}, use one of: SFNS, WFNS."
     )
 
+
 def run_case(
     config: ScenarioConfig,
+    estimator: AirflowEstimator,
     sample_csv: Path,
-    output_dir: Path,
+    result_dir: Path,
     sample_size: int | None,
-    use_sample_size_subdirs: bool,
-    use_sample_file_subdirs: bool,
     verbose: bool,
-) -> dict:
-    result_dir = output_dir
-    if use_sample_size_subdirs and sample_size is not None:
-        result_dir = result_dir / f"{sample_size}samples"
-    if use_sample_file_subdirs:
-        result_dir = result_dir / sample_csv.stem
+) -> None:
     result_dir.mkdir(parents=True, exist_ok=True)
-
-    with suppress_native_output():
-        domain, _, facet_tags = dio.gmshio.read_from_msh(str(config.mesh), MPI.COMM_WORLD, gdim=2)
-        estimator = AirflowEstimator.from_domain(domain, facet_tags, meshfile=config.mesh)
-
-    elem_u = element("Lagrange", domain.basix_cell(), 2, shape=(domain.geometry.dim,))
-    V_truth = fem.functionspace(domain, elem_u)
-    u_true = fem.Function(V_truth)
-    z_height = infer_z_height(config.wind_csv, config.z_height)
-    csv_to_function(config.wind_csv, z_height, config.z_tol, u_true, max_xy_dist=config.max_xy_dist)
-
-    w_true = fem.Function(estimator.W)
-    w_true.x.array[:] = 0.0
-    w_true.sub(0).interpolate(u_true)
-    estimator.set_ground_truth(w_true)
-
-    wall_names = match_boundary_names(estimator._boundary_name_to_id, config.wall_pattern)
-    if wall_names:
-        estimator.set_no_slip_bc(wall_names)
-
-    outflow_names = match_boundary_names(estimator._boundary_name_to_id, config.outflow_pattern)
-    if not outflow_names:
-        raise ValueError(
-            f"No outflow boundaries matched pattern {config.outflow_pattern!r} in {config.mesh.name}."
-        )
-    estimator.set_zero_pressure_bc(outflow_names)
-
-    estimator.set_regularization(config.regularization)
-    estimator.set_weights(
-        kin_v=config.viscosity,
-        misfit=config.weight_misfit,
-        pde_err=config.weight_pde_res,
-        reg=config.weight_reg,
-        boundary=config.weight_boundary,
-    )
 
     mapping_info = estimator.set_measurements_from_csv(
         sample_csv,
@@ -134,7 +121,7 @@ def run_case(
         print(
             f"NS solver {status_text}"
             f"({sample_size if sample_size is not None else 'all'} samples): "
-            f"iterations={iterations}/{config.maxit}, \nfinal_relative_change={change_text},\n tol={config.tol:.3e}"
+            f"iterations={iterations}/{config.maxit}, \nfinal_relative_change={change_text},\n solver_tol={config.solver_tol:.3e}"
         )
     u_est = result.sub(0).collapse()
 
@@ -150,7 +137,7 @@ def run_case(
         "solver": config.solver,
         "regularization": config.regularization,
         "maxit": config.maxit,
-        "tol": config.tol,
+        "solver_tol": config.solver_tol,
         "damping": config.damping,
         "viscosity": config.viscosity,
         "weight_misfit": config.weight_misfit,
@@ -166,26 +153,10 @@ def run_case(
         **mapping_info,
     }
 
-    estimate_path = result_dir / "wind_estimate.csv"
-    plot_path = result_dir / "wind_estimate.png"
-    metadata_path = result_dir / "metadata_wind_est.json"
-    save_velocity_csv(estimate_path, u_est)
-    Visualizer.plot_wind_2Dcsv(
-        estimate_path,
-        output_path=plot_path,
-        title="NSMR wind estimate",
-        show=False,
-    )
-    metadata["wind_estimate_csv"] = str(estimate_path)
-    metadata["wind_estimate_png"] = str(plot_path)
-    with metadata_path.open("w", encoding="utf-8") as f:
-        json.dump(metadata, f, indent=2)
+    write_outputs(result_dir, u_est, metadata)
 
     if verbose:
         print("---")
-
-    return metadata
-
 
 
 def parse_args() -> argparse.Namespace:
@@ -218,10 +189,11 @@ def main() -> None:
             raise FileNotFoundError(f"No sample_points*.csv files found in {config.sample_dir}")
 
     sample_sizes = config.wind_measurement_counts or (None,)
-    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    timestamp = time.strftime("%Y%m%d_%H%M")
     output_root = config.result_dir / f"{config.solver}-{timestamp}"
-    use_sample_size_subdirs = len(sample_sizes) > 1
-    use_sample_file_subdirs = len(sample_files) > 1
+
+    estimator = create_estimator(config)
+
     n_runs = 0
 
     for sample_size in sample_sizes:
@@ -229,15 +201,13 @@ def main() -> None:
             if args.verbose:
                 label = f" with {sample_size} samples" if sample_size is not None else ""
                 print(f"Running {config.solver} for {sample_csv.name}{label}")
-            run_case(
-                config,
-                sample_csv,
-                output_root,
-                sample_size,
-                use_sample_size_subdirs,
-                use_sample_file_subdirs,
-                args.verbose,
-            )
+            result_dir = output_root
+            if len(sample_sizes) > 1 and sample_size is not None:
+                result_dir = result_dir / f"{sample_size}samples"
+            if len(sample_files) > 1:
+                result_dir = result_dir / sample_csv.stem
+
+            run_case(config, estimator, sample_csv, result_dir, sample_size, args.verbose)
             n_runs += 1
 
     print(f"Saved {n_runs} NS runs under: {output_root}")
