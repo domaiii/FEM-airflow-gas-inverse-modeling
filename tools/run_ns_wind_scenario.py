@@ -12,7 +12,7 @@ import dolfinx.io as dio
 from mpi4py import MPI
 from airflow_estimator import AirflowEstimator
 from scenario import ScenarioConfig
-from visualizer import Visualizer
+from visualizer import plot_wind_csv
 
 
 def match_boundary_names(name_to_id: dict[str, int], pattern: str) -> list[str]:
@@ -21,10 +21,19 @@ def match_boundary_names(name_to_id: dict[str, int], pattern: str) -> list[str]:
 
 
 def save_velocity_csv(path: Path, velocity: fem.Function) -> None:
-    coords = velocity.function_space.tabulate_dof_coordinates()[:, :2]
+    coords = velocity.function_space.tabulate_dof_coordinates()
     values = velocity.x.array.reshape(-1, velocity.function_space.dofmap.bs)
-    data = np.column_stack([coords[:, 0], coords[:, 1], values[:, 0], values[:, 1]])
-    np.savetxt(path, data, delimiter=",", header="x,y,wind_x,wind_y", comments="")
+
+    z = coords[:, 2] if coords.shape[1] > 2 else np.zeros(coords.shape[0])
+    w = values[:, 2] if values.shape[1] > 2 else np.zeros(values.shape[0])
+    data = np.column_stack([coords[:, 0], coords[:, 1], z, values[:, 0], values[:, 1], w])
+    np.savetxt(
+        path,
+        data,
+        delimiter=",",
+        header="Points:0,Points:1,Points:2,U:0,U:1,U:2",
+        comments="",
+    )
 
 
 def create_estimator(config: ScenarioConfig) -> AirflowEstimator:
@@ -58,7 +67,7 @@ def write_outputs(result_dir: Path, velocity: fem.Function, metadata: dict) -> N
     metadata_path = result_dir / "metadata_wind_est.json"
 
     save_velocity_csv(estimate_path, velocity)
-    Visualizer.plot_wind_2Dcsv(
+    plot_wind_csv(
         estimate_path,
         output_path=plot_path,
         title="NS wind estimate",
