@@ -184,15 +184,9 @@ def run_scenario(
     scenario: str | Path | ScenarioConfig,
     samples: str | Path | None = None,
     *,
-    all_samples: bool = False,
     verbose: bool = False,
 ) -> ScenarioRunResult:
     """Run one configured scenario for one sample CSV or all scenario samples."""
-    if samples is not None and all_samples:
-        raise ValueError("Pass either samples or all_samples=True, not both.")
-    if samples is None and not all_samples:
-        raise ValueError("Pass a sample CSV or set all_samples=True.")
-
     config = scenario if isinstance(scenario, ScenarioConfig) else ScenarioConfig.load(scenario)
     if samples is not None:
         sample_files = [Path(samples).resolve(strict=True)]

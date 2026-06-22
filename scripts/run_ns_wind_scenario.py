@@ -27,7 +27,6 @@ def main() -> None:
     result = run_scenario(
         args.scenario,
         samples=args.samples,
-        all_samples=args.all_samples,
         verbose=args.verbose,
     )
     print(f"Saved {result.n_runs} NS runs under: {result.output_root}")
