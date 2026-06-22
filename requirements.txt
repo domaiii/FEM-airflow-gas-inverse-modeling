@@ -1,4 +1,3 @@
-adios4dolfinx
 imageio>=2.31,<3
 jupyterlab
 pandas

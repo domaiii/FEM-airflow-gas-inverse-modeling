@@ -1,5 +1,3 @@
-import warnings
-import adios4dolfinx
 import numpy as np
 import pandas as pd
 
@@ -89,26 +87,6 @@ class AirflowMeasurements:
             "max_xy_dist": float(np.max(dist)) if len(dist) else 0.0,
         }
 
-    def reset_random(self, p: int, seed: int | None = None):
-        if self.estimator.ground_truth is None:
-            raise ValueError("No ground truth set. Use set_ground_truth() first.")
-
-        rng = np.random.default_rng(seed)
-        coords_V = self.estimator.V.tabulate_dof_coordinates()
-        sample_ids = rng.choice(len(coords_V), size=p, replace=False)
-
-        x_ids = sample_ids * 2
-        y_ids = sample_ids * 2 + 1
-        velocity_ids_V = np.stack((x_ids, y_ids)).T.flatten()
-        measurement_ids_W = self.estimator.V_to_W[velocity_ids_V]
-        measurement_values = self.estimator.ground_truth.x.array[measurement_ids_W]
-
-        self.estimator.set_measurements(
-            measurement_ids_W=measurement_ids_W,
-            measurement_values=measurement_values,
-            clear_existing=True,
-        )
-
     def coordinates(self) -> np.ndarray:
         coords_P2 = self.estimator.V.tabulate_dof_coordinates()
         W_to_V = {w: v for v, w in enumerate(self.estimator.V_to_W)}
@@ -155,7 +133,6 @@ class AirflowEstimator:
 
         self.bcs: list[fem.DirichletBC] = []
         self.w_final: fem.Function | None = None
-        self.ground_truth: fem.Function | None = None
         self.last_solver_status: dict = {}
         self._boundary_name_to_id: dict[str, int] = {}
         self.measurements = AirflowMeasurements(self)
@@ -167,7 +144,6 @@ class AirflowEstimator:
         *,
         comm=MPI.COMM_WORLD,
         gdim: int = 2,
-        ground_truth: fem.Function | None = None,
     ) -> "AirflowEstimator":
         """Create an estimator directly from a Gmsh ``.msh`` file."""
         meshfile = Path(meshfile).resolve(strict=True)
@@ -178,7 +154,6 @@ class AirflowEstimator:
             domain,
             facet_tags,
             meshfile=meshfile,
-            ground_truth=ground_truth,
         )
 
     @classmethod
@@ -187,62 +162,9 @@ class AirflowEstimator:
         domain: mesh.Mesh,
         facet_tags: mesh.MeshTags | None = None,
         meshfile: str | Path | None = None,
-        ground_truth: fem.Function | None = None,
     ) -> "AirflowEstimator":
         """Create an estimator from an existing DOLFINx mesh."""
         estimator = cls(domain, facet_tags)
-
-        if meshfile is not None:
-            estimator._boundary_name_to_id = cls._read_physical_name_map(meshfile)
-
-        if ground_truth is not None:
-            if ground_truth.function_space == estimator.V:
-                w_truth = fem.Function(estimator.W)
-                w_truth.x.array[:] = 0.0
-                w_truth.sub(0).interpolate(ground_truth)
-                estimator.set_ground_truth(w_truth)
-            else:
-                estimator.set_ground_truth(ground_truth)
-
-        return estimator
-
-    @classmethod
-    def from_bp(
-        cls,
-        bp_path: str | Path,
-        p: int | None = 0,
-        seed: int | None = 0,
-        meshtags_name: str = "facet_tags",
-        fun_name: str | None = "velocity",
-        meshfile: str | Path | None = None,
-    ) -> "AirflowEstimator":
-        """Create an estimator from an ADIOS BP mesh and velocity field."""
-        bp_path = Path(bp_path)
-        domain = adios4dolfinx.read_mesh(bp_path, MPI.COMM_WORLD)
-        try:
-            facet_tags = adios4dolfinx.read_meshtags(
-                bp_path, domain, meshtags_name
-            )
-        except Exception as exc:
-            raise ValueError(
-                f"No meshtags found under name {meshtags_name!r}"
-            ) from exc
-
-        estimator = cls(domain, facet_tags)
-        u_true = fem.Function(estimator.V)
-        adios4dolfinx.read_function(bp_path, u_true, name=fun_name)
-
-        w_true = fem.Function(estimator.W)
-        w_true.x.array[:] = 0.0
-        w_true.sub(0).interpolate(u_true)
-        estimator.set_ground_truth(w_true)
-
-        if p is not None:
-            p = int(p)
-            if p < 0:
-                raise ValueError(f"p must be non-negative, got {p}.")
-            if p > 0:
-                estimator.reset_random_measurements(p, seed=seed)
 
         if meshfile is not None:
             estimator._boundary_name_to_id = cls._read_physical_name_map(meshfile)
@@ -491,19 +413,6 @@ class AirflowEstimator:
             max_xy_dist=max_xy_dist,
         )
 
-    def reset_random_measurements(self, p: int, seed: int | None = None):
-        """
-        Creates new random measurement set overwriting self.measurement_ids_W and selfw_measured.
-        Resets the solution self.w_final.
-        Benötigt, dass eine ground_truth-Funktion gesetzt wurde.
-        """
-        self.measurements.reset_random(p=p, seed=seed)
-
-    def set_ground_truth(self, funW: fem.Function):
-        if self.ground_truth:
-            warnings.warn("Overwriting ground truth data.")
-        self.ground_truth = funW
-            
     def set_weights(self, kin_v: float | None = None, 
                           misfit: float | None = None, 
                           pde_err: float | None = None, 

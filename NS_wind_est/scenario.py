@@ -66,7 +66,7 @@ class ScenarioConfig:
         data = raw.get("data", {})
         paths = raw.get("paths", {})
         wind_measurements = raw.get("wind_measurements", {})
-        gt_wind_mapping = raw.get("gt_wind_mapping", raw.get("ground_truth_slicing", {}))
+        gt_wind_mapping = raw.get("gt_wind_mapping", {})
         solver = raw.get("ns_solver_parameters", {})
         damping = solver.get("damping", cls.damping)
         measurement_counts = wind_measurements.get(
