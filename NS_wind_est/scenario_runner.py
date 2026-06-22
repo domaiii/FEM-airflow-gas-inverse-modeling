@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 from dolfinx import fem
 
-from NS_wind_est.airflow_estimator import AirflowEstimator
+from NS_wind_est.airflow_estimator import AirflowEstimator, AirflowResult
 from NS_wind_est.scenario import ScenarioConfig
 
 
@@ -81,7 +81,9 @@ def write_outputs(result_dir: Path, velocity: fem.Function, metadata: dict) -> N
         json.dump(metadata, f, indent=2)
 
 
-def solve_estimator(estimator: AirflowEstimator, config: ScenarioConfig):
+def solve_estimator(
+    estimator: AirflowEstimator, config: ScenarioConfig
+) -> AirflowResult:
     solver_name = config.solver.strip().upper()
     if solver_name == "SFNS":
         return estimator.solve_SFNS(
@@ -123,18 +125,16 @@ def run_case(
     estimation_start = time.perf_counter()
     result = solve_estimator(estimator, config)
     estimation_runtime_sec = time.perf_counter() - estimation_start
-    solver_status = getattr(estimator, "last_solver_status", {})
-    status_text = "converged" if solver_status.get("converged") else "reached max iterations"
-    iterations = solver_status.get("iterations", "?")
-    final_change = solver_status.get("final_relative_change")
-    change_text = "nan" if final_change is None else f"{float(final_change):.3e}"
+    status = result.status
+    status_text = "converged" if status.converged else "reached max iterations"
+    change_text = f"{status.final_relative_change:.3e}"
     if verbose:
         print(
             f"NS solver {status_text}"
             f"({sample_size if sample_size is not None else 'all'} samples): "
-            f"iterations={iterations}/{config.maxit}, \nfinal_relative_change={change_text},\n solver_tol={config.solver_tol:.3e}"
+            f"iterations={status.iterations}/{status.max_iterations}, \nfinal_relative_change={change_text},\n solver_tol={config.solver_tol:.3e}"
         )
-    u_est = result.sub(0).collapse()
+    u_est = result.velocity
 
     metadata = {
         "scenario": config.name,
@@ -157,10 +157,10 @@ def run_case(
         "weight_boundary": config.weight_boundary,
         "n_discretization_points": int(u_est.function_space.tabulate_dof_coordinates().shape[0]),
         "estimation_runtime_sec": float(estimation_runtime_sec),
-        "solver_converged": bool(solver_status.get("converged", False)),
-        "solver_iterations": int(solver_status.get("iterations", 0)),
-        "solver_max_iterations": int(solver_status.get("max_iterations", config.maxit)),
-        "solver_final_relative_change": float(solver_status.get("final_relative_change", float("nan"))),
+        "solver_converged": status.converged,
+        "solver_iterations": status.iterations,
+        "solver_max_iterations": status.max_iterations,
+        "solver_final_relative_change": status.final_relative_change,
         **mapping_info,
     }
 

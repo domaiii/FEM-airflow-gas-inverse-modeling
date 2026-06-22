@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import re
+from dataclasses import dataclass
 
 from mpi4py import MPI
 from pathlib import Path
@@ -13,6 +14,23 @@ from NS_wind_est.airflow_solvers import (
     WfnsSolver,
     SfnsSolver
 )
+
+@dataclass(frozen=True, slots=True)
+class SolverStatus:
+    converged: bool
+    iterations: int
+    max_iterations: int
+    solver_tolerance: float
+    final_relative_change: float
+
+
+@dataclass(frozen=True, slots=True)
+class AirflowResult:
+    velocity: fem.Function
+    pressure: fem.Function
+    mixed: fem.Function
+    status: SolverStatus
+
 
 class AirflowEstimator:
 
@@ -51,8 +69,7 @@ class AirflowEstimator:
         self.regularization_mode = "smooth"
 
         self.bcs: list[fem.DirichletBC] = []
-        self.w_final: fem.Function | None = None
-        self.last_solver_status: dict = {}
+        self.last_result: AirflowResult | None = None
         self._boundary_name_to_id: dict[str, int] = {}
 
     @classmethod
@@ -232,41 +249,60 @@ class AirflowEstimator:
             regularization_mode=self.regularization_mode,
         )
 
-    def solve_SFNS(self,
-                               maxit: int = 10,
-                               solver_tol: float = 1e-2,
-                               damping: float | None = None,
-                               regularization: str | None = None,
-                               verbose: bool = False):
-        solver = SfnsSolver(self._build_solver_context())
-        result = solver.solve(
-            maxit=maxit,
-            solver_tol=solver_tol,
-            damping=damping,
-            regularization=regularization,
-            verbose=verbose,
+    def _build_result(
+        self, mixed: fem.Function, solver_status: dict
+    ) -> AirflowResult:
+        status = SolverStatus(
+            converged=bool(solver_status["converged"]),
+            iterations=int(solver_status["iterations"]),
+            max_iterations=int(solver_status["max_iterations"]),
+            solver_tolerance=float(solver_status["solver_tolerance"]),
+            final_relative_change=float(solver_status["final_relative_change"]),
         )
-        self.last_solver_status = solver.last_status
-        self.w_final = result
+        result = AirflowResult(
+            velocity=mixed.sub(0).collapse(),
+            pressure=mixed.sub(1).collapse(),
+            mixed=mixed,
+            status=status,
+        )
+        self.last_result = result
         return result
 
-    def solve_WFNS(self,
-                                   maxit: int = 10,
-                                   solver_tol: float = 1e-3,
-                                   damping: float | None = None,
-                                   regularization: str | None = None,
-                                   verbose: bool = False):
-        solver = WfnsSolver(self._build_solver_context())
-        result = solver.solve(
+    def solve_SFNS(
+        self,
+        maxit: int = 10,
+        solver_tol: float = 1e-2,
+        damping: float | None = None,
+        regularization: str | None = None,
+        verbose: bool = False,
+    ) -> AirflowResult:
+        solver = SfnsSolver(self._build_solver_context())
+        mixed = solver.solve(
             maxit=maxit,
             solver_tol=solver_tol,
             damping=damping,
             regularization=regularization,
             verbose=verbose,
         )
-        self.last_solver_status = solver.last_status
-        self.w_final = result
-        return result
+        return self._build_result(mixed, solver.last_status)
+
+    def solve_WFNS(
+        self,
+        maxit: int = 10,
+        solver_tol: float = 1e-3,
+        damping: float | None = None,
+        regularization: str | None = None,
+        verbose: bool = False,
+    ) -> AirflowResult:
+        solver = WfnsSolver(self._build_solver_context())
+        mixed = solver.solve(
+            maxit=maxit,
+            solver_tol=solver_tol,
+            damping=damping,
+            regularization=regularization,
+            verbose=verbose,
+        )
+        return self._build_result(mixed, solver.last_status)
 
     def add_dirichlet_bc(self, bc: fem.DirichletBC | list[fem.DirichletBC]):
         if isinstance(bc, list):
@@ -309,7 +345,7 @@ class AirflowEstimator:
 
         self.w_measured.x.array[ids] = values
         self.measurement_ids_W = ids
-        self.w_final = None
+        self.last_result = None
 
     def set_measurements_from_csv(
         self,
