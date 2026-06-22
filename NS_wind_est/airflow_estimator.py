@@ -8,6 +8,7 @@ from pathlib import Path
 from scipy.spatial import cKDTree
 from basix.ufl import element, mixed_element
 from dolfinx import fem, mesh
+import dolfinx.io as dio
 from NS_wind_est.airflow_solvers import (
     AirflowSolverConfig,
     WfnsSolver,
@@ -118,25 +119,33 @@ class AirflowMeasurements:
 
 class AirflowEstimator:
 
-    def __init__(self,
-                 domain: mesh.Mesh,
-                 facet_tags: mesh.MeshTags,
-                 w_measured: fem.Function,
-                 measurement_ids_W: list):
-        """
-        Initialisiert den Estimator OHNE Boundary Conditions.
-        Alle Funktionsräume werden aufgebaut, damit man sie direkt für BCs nutzen kann.
-        """
-        self.domain: mesh.Mesh = domain
-        self.measurement_ids_W = np.asarray(measurement_ids_W, dtype=np.int32)
-        self.w_measured = w_measured
+    def __init__(
+        self,
+        domain: mesh.Mesh,
+        facet_tags: mesh.MeshTags | None = None,
+    ):
+        """Create an estimator for an existing DOLFINx mesh."""
+        self.domain = domain
+        self.facet_tags = facet_tags
 
-        (self.W, self.W0, self.W1,
-         self.V, self.Q,
-         self.V_to_W, self.Q_to_W) = self.build_mixed_space(domain)
-        
-        self.domain.topology.create_connectivity(domain.topology.dim - 1, domain.topology.dim)
-        
+        (
+            self.W,
+            self.W0,
+            self.W1,
+            self.V,
+            self.Q,
+            self.V_to_W,
+            self.Q_to_W,
+        ) = self.build_mixed_space(domain)
+
+        self.w_measured = fem.Function(self.W)
+        self.w_measured.x.array[:] = 0.0
+        self.measurement_ids_W = np.array([], dtype=np.int32)
+
+        self.domain.topology.create_connectivity(
+            domain.topology.dim - 1, domain.topology.dim
+        )
+
         self.viscosity = 1e-5
         self.weight_misfit = 1e2
         self.weight_pde_res = 1e0
@@ -145,119 +154,101 @@ class AirflowEstimator:
         self.regularization_mode = "smooth"
 
         self.bcs: list[fem.DirichletBC] = []
-        self.facet_tags = facet_tags
         self.w_final: fem.Function | None = None
         self.ground_truth: fem.Function | None = None
+        self.last_solver_status: dict = {}
         self._boundary_name_to_id: dict[str, int] = {}
         self.measurements = AirflowMeasurements(self)
 
     @classmethod
-    def from_domain(cls,
-                    domain: mesh.Mesh,
-                    facet_tags: mesh.MeshTags,
-                    meshfile: str | Path | None = None,
-                    ground_truth: fem.Function | None = None):
-        """
-        Construct estimator from fem domain data from .msh file.
-
-        Parameters
-        ----------
-        domain : mesh.Mesh
-            Existing simulation mesh.
-        facet_tags : mesh.MeshTags
-            Optional facet meshtags matching the domain.
-        meshfile : str | Path | None
-            Optional Gmsh .msh file to recover physical group names.
-        ground_truth : fem.Function | None
-            Optional reference field in either V or W space.
-        """
-        W, _, _, V, _, _, _ = cls.build_mixed_space(domain)
-        w_measured = fem.Function(W)
-        w_measured.x.array[:] = 0.0
-
-        est = cls(
+    def from_mesh(
+        cls,
+        meshfile: str | Path,
+        *,
+        comm=MPI.COMM_WORLD,
+        gdim: int = 2,
+        ground_truth: fem.Function | None = None,
+    ) -> "AirflowEstimator":
+        """Create an estimator directly from a Gmsh ``.msh`` file."""
+        meshfile = Path(meshfile).resolve(strict=True)
+        domain, _, facet_tags = dio.gmshio.read_from_msh(
+            str(meshfile), comm, gdim=gdim
+        )
+        return cls.from_domain(
             domain,
             facet_tags,
-            w_measured,
-            np.array([], dtype=np.int32)
+            meshfile=meshfile,
+            ground_truth=ground_truth,
         )
 
+    @classmethod
+    def from_domain(
+        cls,
+        domain: mesh.Mesh,
+        facet_tags: mesh.MeshTags | None = None,
+        meshfile: str | Path | None = None,
+        ground_truth: fem.Function | None = None,
+    ) -> "AirflowEstimator":
+        """Create an estimator from an existing DOLFINx mesh."""
+        estimator = cls(domain, facet_tags)
+
         if meshfile is not None:
-            est._boundary_name_to_id = cls._read_physical_name_map(meshfile)
+            estimator._boundary_name_to_id = cls._read_physical_name_map(meshfile)
 
         if ground_truth is not None:
-            if ground_truth.function_space == V:
-                w_truth = fem.Function(W)
+            if ground_truth.function_space == estimator.V:
+                w_truth = fem.Function(estimator.W)
                 w_truth.x.array[:] = 0.0
                 w_truth.sub(0).interpolate(ground_truth)
-                est.set_ground_truth(w_truth)
+                estimator.set_ground_truth(w_truth)
             else:
-                est.set_ground_truth(ground_truth)
+                estimator.set_ground_truth(ground_truth)
 
-        return est
+        return estimator
 
     @classmethod
-    def from_bp(cls,
-                bp_path: Path,
-                p: int | None = 0,
-                seed: int | None = 0,
-                meshtags_name: str = "facet_tags",
-                fun_name: str | None = "velocity",
-                meshfile: Path | None = None):
-        """
-        Construct estimator from ADIOS bp file.
-
-        Parameters
-        ----------
-        bp_path : Path
-            ADIOS .bp file containing mesh, velocity, facet tags.
-        p : int
-            Number of velocity measurement points.
-        seed : int
-            Random seed for measurement sampling.
-        fun_name : str
-            Name of the velocity function in the file.
-        meshtags_name : str
-            Name of facet tags in the file.
-        meshfile : Path | None
-            Optional Gmsh .msh file to recover physical group names
-            (e.g. 'Walls', 'Outflow'). If provided, we build a
-            name -> id mapping used by set_*_bc helpers.
-        """
+    def from_bp(
+        cls,
+        bp_path: str | Path,
+        p: int | None = 0,
+        seed: int | None = 0,
+        meshtags_name: str = "facet_tags",
+        fun_name: str | None = "velocity",
+        meshfile: str | Path | None = None,
+    ) -> "AirflowEstimator":
+        """Create an estimator from an ADIOS BP mesh and velocity field."""
+        bp_path = Path(bp_path)
         domain = adios4dolfinx.read_mesh(bp_path, MPI.COMM_WORLD)
-        W, _, _, V, _, V_to_W, _ = cls.build_mixed_space(domain)
+        try:
+            facet_tags = adios4dolfinx.read_meshtags(
+                bp_path, domain, meshtags_name
+            )
+        except Exception as exc:
+            raise ValueError(
+                f"No meshtags found under name {meshtags_name!r}"
+            ) from exc
 
-        u_true = fem.Function(V)
+        estimator = cls(domain, facet_tags)
+        u_true = fem.Function(estimator.V)
         adios4dolfinx.read_function(bp_path, u_true, name=fun_name)
 
-        w_true = fem.Function(W)
+        w_true = fem.Function(estimator.W)
+        w_true.x.array[:] = 0.0
         w_true.sub(0).interpolate(u_true)
+        estimator.set_ground_truth(w_true)
 
-        coords_P2 = V.tabulate_dof_coordinates()
-        rng = np.random.default_rng(seed)
-        sample_ids = rng.choice(len(coords_P2), size=p, replace=False)
-        x_ids, y_ids = sample_ids * 2, sample_ids * 2 + 1
-        velocity_ids_V = np.stack((x_ids, y_ids)).T.flatten()
-        measurement_ids_W = np.asarray(V_to_W, dtype=np.int32)[velocity_ids_V]
-
-        w_measured = fem.Function(W)
-        w_measured.x.array[:] = 0.0
-        w_measured.x.array[measurement_ids_W] = w_true.x.array[measurement_ids_W]
-
-        try:
-            tags = adios4dolfinx.read_meshtags(bp_path, domain, meshtags_name)
-        except:
-            raise ValueError(f"No meshtags found under name '{meshtags_name}'")
-    
-        est = cls(domain, tags, w_measured, measurement_ids_W)
-        est.set_ground_truth(w_true)
+        if p is not None:
+            p = int(p)
+            if p < 0:
+                raise ValueError(f"p must be non-negative, got {p}.")
+            if p > 0:
+                estimator.reset_random_measurements(p, seed=seed)
 
         if meshfile is not None:
-            est._boundary_name_to_id = cls._read_physical_name_map(meshfile)
-        else:
-            est._boundary_name_to_id = {}
-        return est
-        
+            estimator._boundary_name_to_id = cls._read_physical_name_map(meshfile)
+
+        return estimator
+
     def _ensure_boundary_name_map(self):
         if self.facet_tags is None:
             raise RuntimeError("facet_tags is not set.")

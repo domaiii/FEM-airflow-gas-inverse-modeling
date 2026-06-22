@@ -6,8 +6,6 @@ from pathlib import Path
 
 import numpy as np
 from dolfinx import fem
-import dolfinx.io as dio
-from mpi4py import MPI
 
 from NS_wind_est.airflow_estimator import AirflowEstimator
 from NS_wind_est.scenario import ScenarioConfig
@@ -46,8 +44,7 @@ def save_velocity_csv(path: Path, velocity: fem.Function) -> None:
 
 
 def create_estimator(config: ScenarioConfig) -> AirflowEstimator:
-    domain, _, facet_tags = dio.gmshio.read_from_msh(str(config.mesh), MPI.COMM_WORLD, gdim=2)
-    estimator = AirflowEstimator.from_domain(domain, facet_tags, meshfile=config.mesh)
+    estimator = AirflowEstimator.from_mesh(config.mesh)
 
     wall_names = match_boundary_names(estimator._boundary_name_to_id, config.wall_pattern)
     if wall_names:
