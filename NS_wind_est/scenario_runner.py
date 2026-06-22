@@ -1,5 +1,4 @@
 import json
-import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,11 +21,6 @@ class ScenarioRunResult:
         return len(self.result_dirs)
 
 
-def match_boundary_names(name_to_id: dict[str, int], pattern: str) -> list[str]:
-    regex = re.compile(pattern, re.IGNORECASE)
-    return [name for name in name_to_id if regex.search(name)]
-
-
 def save_velocity_csv(path: Path, velocity: fem.Function) -> None:
     coords = velocity.function_space.tabulate_dof_coordinates()
     values = velocity.x.array.reshape(-1, velocity.function_space.dofmap.bs)
@@ -46,11 +40,11 @@ def save_velocity_csv(path: Path, velocity: fem.Function) -> None:
 def create_estimator(config: ScenarioConfig) -> AirflowEstimator:
     estimator = AirflowEstimator.from_mesh(config.mesh)
 
-    wall_names = match_boundary_names(estimator._boundary_name_to_id, config.wall_pattern)
+    wall_names = estimator.match_boundary_names(config.wall_pattern)
     if wall_names:
         estimator.set_no_slip_bc(wall_names)
 
-    outflow_names = match_boundary_names(estimator._boundary_name_to_id, config.outflow_pattern)
+    outflow_names = estimator.match_boundary_names(config.outflow_pattern)
     if not outflow_names:
         raise ValueError(
             f"No outflow boundaries matched pattern {config.outflow_pattern!r} in {config.mesh.name}."
@@ -59,11 +53,11 @@ def create_estimator(config: ScenarioConfig) -> AirflowEstimator:
 
     estimator.set_regularization(config.regularization)
     estimator.set_weights(
-        kin_v=config.viscosity,
-        misfit=config.weight_misfit,
-        pde_err=config.weight_pde_res,
-        reg=config.weight_reg,
-        boundary=config.weight_boundary,
+        viscosity=config.viscosity,
+        weight_misfit=config.weight_misfit,
+        weight_pde_res=config.weight_pde_res,
+        weight_reg=config.weight_reg,
+        weight_boundary=config.weight_boundary,
     )
     return estimator
 

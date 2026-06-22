@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import re
 
 from mpi4py import MPI
 from pathlib import Path
@@ -167,17 +168,30 @@ class AirflowEstimator:
         estimator = cls(domain, facet_tags)
 
         if meshfile is not None:
-            estimator._boundary_name_to_id = cls._read_physical_name_map(meshfile)
+            estimator._boundary_name_to_id = cls._read_physical_name_map(
+                meshfile, dim=domain.topology.dim - 1
+            )
 
         return estimator
+
+    @property
+    def boundary_names(self) -> tuple[str, ...]:
+        """Physical boundary names available for named boundary conditions."""
+        return tuple(self._boundary_name_to_id.keys())
+
+    def match_boundary_names(self, pattern: str) -> list[str]:
+        """Return physical boundary names matching a case-insensitive regex."""
+        self._ensure_boundary_name_map()
+        regex = re.compile(pattern, re.IGNORECASE)
+        return [name for name in self.boundary_names if regex.search(name)]
 
     def _ensure_boundary_name_map(self):
         if self.facet_tags is None:
             raise RuntimeError("facet_tags is not set.")
         if not self._boundary_name_to_id:
             raise RuntimeError(
-                "No boundary name->id mapping available. "
-                "Provide meshfile during construction or set _boundary_name_to_id manually."
+                "No boundary names available. Construct the estimator with from_mesh() "
+                "or pass meshfile to from_domain()."
             )
 
     def set_no_slip_bc(self, wall_names: str | list[str]):
@@ -255,14 +269,16 @@ class AirflowEstimator:
         return W, W0, W1, V, Q, np.array(V_to_W, dtype=np.int32), np.array(Q_to_W, dtype=np.int32)
 
     @staticmethod
-    def _read_physical_name_map(meshfile: Path) -> dict[str, int]:
+    def _read_physical_name_map(
+        meshfile: str | Path, dim: int | None = None
+    ) -> dict[str, int]:
         import gmsh
 
         meshfile = Path(meshfile).resolve(strict=True)
         gmsh.initialize()
         try:
             gmsh.open(str(meshfile))
-            groups = gmsh.model.getPhysicalGroups()
+            groups = gmsh.model.getPhysicalGroups(dim)
             return {gmsh.model.getPhysicalName(dim, tag): tag for (dim, tag) in groups}
         finally:
             gmsh.finalize()
@@ -413,22 +429,21 @@ class AirflowEstimator:
             max_xy_dist=max_xy_dist,
         )
 
-    def set_weights(self, kin_v: float | None = None, 
-                          misfit: float | None = None, 
-                          pde_err: float | None = None, 
-                          reg: float | None = None,
-                          boundary: float | None = None):
-        if kin_v is not None:
-            self.viscosity = kin_v
-        if misfit is not None:
-            self.weight_misfit = misfit
-        if pde_err is not None:
-            self.weight_pde_res = pde_err
-        if reg is not None:
-            self.weight_reg = reg
-        if boundary is not None:
-            self.weight_boundary = boundary
-        
+    def set_weights(
+        self,
+        *,
+        viscosity: float | None = None,
+        weight_misfit: float | None = None,
+        weight_pde_res: float | None = None,
+        weight_reg: float | None = None,
+        weight_boundary: float | None = None,
+    ) -> None:
+        if viscosity: self.viscosity = viscosity
+        if weight_misfit: self.weight_misfit = weight_misfit
+        if weight_pde_res: self.weight_pde_res = weight_pde_res
+        if weight_reg: self.weight_reg = weight_reg
+        if weight_boundary: self.weight_boundary = weight_boundary
+
     def get_measurement_coordinates(self) -> np.ndarray:
         """Rekonstruiere Messpunkt-Koordinaten aus measurement_ids_W."""
         return self.measurements.coordinates()
