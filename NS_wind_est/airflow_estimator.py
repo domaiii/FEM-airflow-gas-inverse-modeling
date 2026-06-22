@@ -14,88 +14,6 @@ from NS_wind_est.airflow_solvers import (
     SfnsSolver
 )
 
-class AirflowMeasurements:
-
-    def __init__(self, estimator: "AirflowEstimator"):
-        self.estimator = estimator
-
-    def set_from_csv(self,
-                     samples_csv: str | Path,
-                     count: int | None = None,
-                     noise_std: float | None = None,
-                     max_xy_dist: float | None = None) -> dict[str, float]:
-        samples_csv = Path(samples_csv).resolve(strict=True)
-        df = pd.read_csv(samples_csv)
-        if count is not None:
-            count = int(count)
-            if count < 1:
-                raise ValueError(f"count must be at least 1, got {count}.")
-            if count > len(df):
-                raise ValueError(
-                    f"Requested {count} measurements from {samples_csv.name}, but file only contains {len(df)} rows."
-                )
-            df = df.iloc[:count].copy()
-
-        required = ["Points:0", "Points:1", "U:0", "U:1"]
-        missing = [c for c in required if c not in df.columns]
-        if missing:
-            raise ValueError(
-                f"Missing required columns in {samples_csv.name}: {missing}. "
-                f"Expected at least {required}."
-            )
-        if len(df) == 0:
-            raise ValueError(f"No sample rows found in {samples_csv}")
-
-        samples_xy = df[["Points:0", "Points:1"]].to_numpy(dtype=float)
-        samples_uv = df[["U:0", "U:1"]].to_numpy(dtype=float, copy=True)
-        
-        if noise_std is not None: 
-            samples_uv += np.random.normal(0, noise_std, (len(df), 2))
-
-        node_xy = np.asarray(self.estimator.V.tabulate_dof_coordinates(), dtype=float)[:, :2]
-        tree = cKDTree(node_xy)
-        dist, node_ids = tree.query(samples_xy, k=1, p=2.0, workers=-1)
-
-        max_dist = float(np.max(dist))
-        if max_xy_dist is not None and max_dist > max_xy_dist:
-            raise ValueError(
-                f"Maximum XY mapping distance exceeded: {max_dist:.6g} > {max_xy_dist:.6g}"
-            )
-        n_input = int(len(node_ids))
-        _, first_idx = np.unique(node_ids, return_index=True)
-        keep = np.sort(first_idx)
-        n_dropped = n_input - int(len(keep))
-        node_ids = node_ids[keep]
-        samples_uv = samples_uv[keep]
-        dist = dist[keep]
-
-        x_ids = node_ids * 2
-        y_ids = node_ids * 2 + 1
-        velocity_ids_V = np.stack((x_ids, y_ids)).T.flatten().astype(np.int32)
-        measurement_ids_W = self.estimator.V_to_W[velocity_ids_V]
-        measurement_values = np.stack((samples_uv[:, 0], samples_uv[:, 1]), axis=1).flatten()
-
-        self.estimator.set_measurements(
-            measurement_ids_W=measurement_ids_W,
-            measurement_values=measurement_values,
-            clear_existing=True,
-        )
-
-        return {
-            "n_input_samples": float(n_input),
-            "n_used_samples": float(len(node_ids)),
-            "n_dropped_duplicate_nodes": float(n_dropped),
-            "max_xy_dist": float(np.max(dist)) if len(dist) else 0.0,
-        }
-
-    def coordinates(self) -> np.ndarray:
-        coords_P2 = self.estimator.V.tabulate_dof_coordinates()
-        W_to_V = {w: v for v, w in enumerate(self.estimator.V_to_W)}
-        measured_v_ids = [W_to_V[i] for i in self.estimator.measurement_ids_W if i in W_to_V]
-        measured_v_ids_unique = np.unique(np.array(measured_v_ids) // self.estimator.domain.geometry.dim)
-        return coords_P2[measured_v_ids_unique]
-
-
 class AirflowEstimator:
 
     def __init__(
@@ -136,7 +54,6 @@ class AirflowEstimator:
         self.w_final: fem.Function | None = None
         self.last_solver_status: dict = {}
         self._boundary_name_to_id: dict[str, int] = {}
-        self.measurements = AirflowMeasurements(self)
 
     @classmethod
     def from_mesh(
@@ -401,33 +318,74 @@ class AirflowEstimator:
         noise_std: float | None = None,
         max_xy_dist: float | None = None,
     ) -> dict[str, float]:
-        """
-        Load wind samples from CSV and map them to nearest velocity nodes.
+        """Load wind samples from CSV and map them to nearest velocity nodes."""
+        samples_csv = Path(samples_csv).resolve(strict=True)
+        df = pd.read_csv(samples_csv)
 
-        Expected CSV columns: Points:0, Points:1, U:0, U:1.
+        if count is not None:
+            count = int(count)
+            if count < 1:
+                raise ValueError(f"count must be at least 1, got {count}.")
+            if count > len(df):
+                raise ValueError(
+                    f"Requested {count} measurements from {samples_csv.name}, "
+                    f"but file only contains {len(df)} rows."
+                )
+            df = df.iloc[:count].copy()
 
-        Parameters
-        ----------
-        samples_csv : str | Path
-            Path to sample CSV.
-        count : int | None
-            Optional number of rows to import from the top of the CSV. If omitted, all rows are used.
-        noise_std : float | None
-            Optional standard deviation for gaussian noise level to be added to the measurements.
-        max_xy_dist : float | None
-            Optional maximum allowed nearest-neighbor mapping distance in XY.
+        required = ["Points:0", "Points:1", "U:0", "U:1"]
+        missing = [column for column in required if column not in df.columns]
+        if missing:
+            raise ValueError(
+                f"Missing required columns in {samples_csv.name}: {missing}. "
+                f"Expected at least {required}."
+            )
+        if len(df) == 0:
+            raise ValueError(f"No sample rows found in {samples_csv}")
 
-        Returns
-        -------
-        dict[str, float]
-            Mapping stats (input/used samples, dropped duplicates, max distance).
-        """
-        return self.measurements.set_from_csv(
-            samples_csv=samples_csv,
-            count=count,
-            noise_std=noise_std,
-            max_xy_dist=max_xy_dist,
+        samples_xy = df[["Points:0", "Points:1"]].to_numpy(dtype=float)
+        samples_uv = df[["U:0", "U:1"]].to_numpy(dtype=float, copy=True)
+        if noise_std is not None:
+            samples_uv += np.random.normal(0, noise_std, (len(df), 2))
+
+        node_xy = np.asarray(self.V.tabulate_dof_coordinates(), dtype=float)[:, :2]
+        tree = cKDTree(node_xy)
+        dist, node_ids = tree.query(samples_xy, k=1, p=2.0, workers=-1)
+
+        max_dist = float(np.max(dist))
+        if max_xy_dist is not None and max_dist > max_xy_dist:
+            raise ValueError(
+                f"Maximum XY mapping distance exceeded: "
+                f"{max_dist:.6g} > {max_xy_dist:.6g}"
+            )
+
+        n_input = int(len(node_ids))
+        _, first_idx = np.unique(node_ids, return_index=True)
+        keep = np.sort(first_idx)
+        n_dropped = n_input - int(len(keep))
+        node_ids = node_ids[keep]
+        samples_uv = samples_uv[keep]
+        dist = dist[keep]
+
+        dim = self.domain.geometry.dim
+        velocity_ids_V = (
+            node_ids[:, None] * dim + np.arange(dim, dtype=np.int32)
+        ).reshape(-1)
+        measurement_ids_W = self.V_to_W[velocity_ids_V]
+        measurement_values = samples_uv[:, :dim].reshape(-1)
+
+        self.set_measurements(
+            measurement_ids_W=measurement_ids_W,
+            measurement_values=measurement_values,
+            clear_existing=True,
         )
+
+        return {
+            "n_input_samples": float(n_input),
+            "n_used_samples": float(len(node_ids)),
+            "n_dropped_duplicate_nodes": float(n_dropped),
+            "max_xy_dist": float(np.max(dist)) if len(dist) else 0.0,
+        }
 
     def set_weights(
         self,
@@ -445,5 +403,12 @@ class AirflowEstimator:
         if weight_boundary: self.weight_boundary = weight_boundary
 
     def get_measurement_coordinates(self) -> np.ndarray:
-        """Rekonstruiere Messpunkt-Koordinaten aus measurement_ids_W."""
-        return self.measurements.coordinates()
+        """Return coordinates of the currently configured measurements."""
+        coords = self.V.tabulate_dof_coordinates()
+        W_to_V = {w_id: v_id for v_id, w_id in enumerate(self.V_to_W)}
+        measured_v_ids = np.asarray(
+            [W_to_V[w_id] for w_id in self.measurement_ids_W if w_id in W_to_V],
+            dtype=np.int32,
+        )
+        point_ids = np.unique(measured_v_ids // self.domain.geometry.dim)
+        return coords[point_ids]
