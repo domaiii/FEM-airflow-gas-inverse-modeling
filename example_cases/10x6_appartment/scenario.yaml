@@ -20,7 +20,7 @@ ns_solver_parameters:
   solver: SFNS
   regularization: smooth
   maxit: 25
-  solver_sol: 0.01
+  solver_tol: 0.01
   damping: 0.5
   viscosity: 1.0e-05
   weight_misfit: 10.0

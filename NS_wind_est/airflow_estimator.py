@@ -10,8 +10,8 @@ from basix.ufl import element, mixed_element
 from dolfinx import fem, mesh
 from NS_wind_est.airflow_solvers import (
     AirflowSolverConfig,
-    LinearLeastSquaresSolver,
-    MinimumResidualSolver
+    WfnsSolver,
+    SfnsSolver
 )
 
 class AirflowMeasurements:
@@ -392,7 +392,7 @@ class AirflowEstimator:
                                damping: float | None = None,
                                regularization: str | None = None,
                                verbose: bool = False):
-        solver = MinimumResidualSolver(self._build_solver_context())
+        solver = SfnsSolver(self._build_solver_context())
         result = solver.solve(
             maxit=maxit,
             solver_tol=solver_tol,
@@ -410,7 +410,7 @@ class AirflowEstimator:
                                    damping: float | None = None,
                                    regularization: str | None = None,
                                    verbose: bool = False):
-        solver = LinearLeastSquaresSolver(self._build_solver_context())
+        solver = WfnsSolver(self._build_solver_context())
         result = solver.solve(
             maxit=maxit,
             solver_tol=solver_tol,

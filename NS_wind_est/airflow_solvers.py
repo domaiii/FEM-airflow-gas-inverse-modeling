@@ -189,7 +189,7 @@ class BaseAirflowSolver(ABC):
         return {}
 
 
-class MinimumResidualSolver(BaseAirflowSolver):
+class SfnsSolver(BaseAirflowSolver):
 
     def _build_system(self, wh_prev: fem.Function, reg_mode: str):
         W = wh_prev.function_space
@@ -281,7 +281,7 @@ class MinimumResidualSolver(BaseAirflowSolver):
             ),
         }
 
-class LinearLeastSquaresSolver(BaseAirflowSolver):
+class WfnsSolver(BaseAirflowSolver):
 
     def __init__(self, ctx: AirflowSolverConfig):
         super().__init__(ctx)
