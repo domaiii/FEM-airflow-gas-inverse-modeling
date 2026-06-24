@@ -3,19 +3,19 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 import matplotlib.tri as mtri
+
 from scipy.spatial import cKDTree
 from pathlib import Path
 from basix.ufl import element
-from dolfinx import fem
+from dolfinx import fem, mesh
 
 class Visualizer:
     """
     2D visualizer for FEM meshes and functions using matplotlib.
     """
 
-    def __init__(self, function_space: fem.FunctionSpace, figsize=(10, 5), dpi=160):
-        self.function_space = function_space
-        self.mesh = function_space.mesh
+    def __init__(self, mesh: mesh.Mesh, figsize=(10, 5), dpi=160):
+        self.mesh = mesh
         self.fig, self.ax = plt.subplots(figsize=figsize, dpi=dpi)
         self._last_mappable = None
 
@@ -92,15 +92,37 @@ class Visualizer:
             coords = coords.reshape(1, -1)
         self.ax.scatter(coords[:, 0], coords[:, 1], c=color, s=size, label=label)
 
+    def draw_boundary_segment(
+        self,
+        segments: list[np.ndarray],
+        color="black",
+        linewidth: float = 2.0,
+        label: str | None = None,
+    ):
+        """Add XY line segments to the plot."""
+        plotted_label = label
+        for segment in segments:
+            xy = np.asarray(segment, dtype=float)
+            if xy.ndim != 2 or xy.shape[1] < 2:
+                raise ValueError("Each segment must have shape (n_points, >=2).")
+            self.ax.plot(
+                xy[:, 0],
+                xy[:, 1],
+                clip_on=False,
+                color=color,
+                linewidth=linewidth,
+                label=plotted_label,
+            )
+            plotted_label = None
+
     def add_streamplot(
         self,
-        name: str,
         vector_func: fem.Function,
         nx: int = 220,
         ny: int = 140,
-        density: float = 1.6,
+        density: float = 2.0,
         cmap: str = "coolwarm",
-        linewidth: float = 1.0,
+        linewidth: float = 1.3,
         arrowsize: float = 1.0,
     ):
         """
@@ -109,7 +131,7 @@ class Visualizer:
         """
         bs = vector_func.function_space.dofmap.index_map_bs
         if bs < 2:
-            raise ValueError(f"{name} must be a vector field with at least 2 components.")
+            raise ValueError(f"Given field must be a vector field with at least 2 components.")
 
         # Regular plotting grid in domain bounding box
         x_min, y_min = np.min(self.points, axis=0)
@@ -153,16 +175,20 @@ class Visualizer:
         )
         self._last_mappable = strm.lines
 
-    def show(
+    def _prepare_plot(
         self,
         title: str | None = None,
-        filename: str | None = None,
         show_colorbar: bool = True,
-        colorbar_label: str | None = None,
+        colorbar_label: str | None = "Wind speed magnitude (m/s)",
     ):
         self.ax.set_aspect("equal", adjustable="box")
         self.ax.set_xlabel("x")
         self.ax.set_ylabel("y")
+        for spine in self.ax.spines.values():
+            spine.set_color("0.75")
+            spine.set_linewidth(0.7)
+            spine.set_zorder(0)
+        self.ax.tick_params(colors="0.35", width=0.7)
         if title is not None:
             self.ax.set_title(title)
 
@@ -182,11 +208,34 @@ class Visualizer:
             )
 
         self.fig.tight_layout()
-        if filename is not None:
-            self.fig.savefig(filename, dpi=self.fig.dpi)
-            print(f"[Visualizer] Saved figure: {filename}")
-        else:
-            plt.show()
+
+    def show(
+        self,
+        title: str | None = None,
+        show_colorbar: bool = True,
+        colorbar_label: str | None = "Wind speed magnitude (m/s)",
+    ):
+        self._prepare_plot(
+            title=title,
+            show_colorbar=show_colorbar,
+            colorbar_label=colorbar_label,
+        )
+        plt.show()
+
+    def save(
+        self,
+        filename: str | Path,
+        title: str | None = None,
+        show_colorbar: bool = True,
+        colorbar_label: str | None = "Wind speed magnitude (m/s)",
+    ):
+        self._prepare_plot(
+            title=title,
+            show_colorbar=show_colorbar,
+            colorbar_label=colorbar_label,
+        )
+        self.fig.savefig(filename, dpi=self.fig.dpi)
+        print(f"[Visualizer] Saved figure: {filename}")
 
 
 

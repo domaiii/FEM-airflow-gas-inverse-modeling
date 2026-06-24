@@ -1,29 +1,22 @@
 """Loading and validation helpers for YAML scenario cases."""
-
-from __future__ import annotations
-
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
-
 import numpy as np
 import pandas as pd
 import yaml
 
+from __future__ import annotations
+from dataclasses import dataclass, field
+from pathlib import Path
 
-SINGLE_LAYER_Z_SPAN = 0.1
-
+SINGLE_LAYER_Z_SPAN = 0.25
 
 def _optional_path(root: Path, value: str | None) -> Path | None:
     return None if value is None else (root / value).resolve()
-
 
 def _required_path(root: Path, values: dict, fallback: dict, key: str) -> Path:
     value = values.get(key)
     if value is None:
         value = fallback[key]
     return (root / value).resolve()
-
 
 @dataclass(frozen=True)
 class ScenarioConfig:

@@ -114,6 +114,11 @@ class AirflowEstimator:
         """Names of all available physical boundary groups."""
         return tuple(self._boundary_name_to_id.keys())
 
+    @property
+    def boundary_name_to_id(self) -> dict[str, int]:
+        """Mapping from physical boundary names to mesh tag ids."""
+        return dict(self._boundary_name_to_id)
+
     def match_boundary_names(self, pattern: str) -> list[str]:
         """Return physical boundary names matching a case-insensitive regex."""
         regex = re.compile(pattern, re.IGNORECASE)
@@ -135,6 +140,22 @@ class AirflowEstimator:
             )
 
         return [self._boundary_name_to_id[name] for name in names]
+
+    def get_boundary_segments(self, names: str | list[str]) -> list[np.ndarray]:
+        """Return XY line segments for named physical boundary groups."""
+        fdim = self.domain.topology.dim - 1
+        self.domain.topology.create_connectivity(fdim, 0)
+        facet_to_vertex = self.domain.topology.connectivity(fdim, 0)
+
+        segments: list[np.ndarray] = []
+        for boundary_id in self._boundary_ids(names):
+            for facet in self.facet_tags.find(boundary_id):
+                vertices = facet_to_vertex.links(int(facet))
+                xy = self.domain.geometry.x[vertices, :2]
+                if len(xy) == 0:
+                    continue
+                segments.append(np.asarray(xy, dtype=float))
+        return segments
 
     def set_no_slip_bc(self, no_slip_bdry_names: str | list[str]):
         """

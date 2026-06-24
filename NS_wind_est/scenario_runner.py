@@ -2,10 +2,9 @@
 
 import json
 import time
+import numpy as np
 from dataclasses import dataclass
 from pathlib import Path
-
-import numpy as np
 from dolfinx import fem
 
 from NS_wind_est.airflow_estimator import AirflowEstimator, AirflowResult
