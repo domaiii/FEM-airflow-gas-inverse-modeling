@@ -1,3 +1,5 @@
+"""Loading and validation helpers for YAML scenario cases."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -25,6 +27,8 @@ def _required_path(root: Path, values: dict, fallback: dict, key: str) -> Path:
 
 @dataclass(frozen=True)
 class ScenarioConfig:
+    """Normalized configuration loaded from a scenario YAML file."""
+
     name: str
     root: Path
     wind_csv: Path
@@ -41,7 +45,7 @@ class ScenarioConfig:
     wall_pattern: str = r"wall|obstacle"
     outflow_pattern: str = r"outlet|outflow"
     solver: str = "SFNS"
-    regularization: str = "smooth"
+    regularization: str = "gradient"
     maxit: int = 25
     solver_tol: float = 1e-2
     damping: float | None = None
@@ -49,10 +53,11 @@ class ScenarioConfig:
     weight_misfit: float = 1e2
     weight_pde_res: float = 1.0
     weight_reg: float = 1e-2
-    weight_boundary: float = 1e4
+    weight_wfns_bc: float = 1e4
 
     @classmethod
     def load(cls, scenario: str | Path) -> "ScenarioConfig":
+        """Load ``scenario.yaml`` from a file path or scenario directory."""
         scenario = Path(scenario).resolve()
         if scenario.is_dir():
             scenario = scenario / "scenario.yaml"
@@ -108,11 +113,12 @@ class ScenarioConfig:
             weight_misfit=float(solver.get("weight_misfit", cls.weight_misfit)),
             weight_pde_res=float(solver.get("weight_pde_res", cls.weight_pde_res)),
             weight_reg=float(solver.get("weight_reg", cls.weight_reg)),
-            weight_boundary=float(solver.get("weight_boundary", cls.weight_boundary))
+            weight_wfns_bc=float(solver.get("weight_wfns_bc", cls.weight_wfns_bc))
         )
 
 
 def infer_z_height(wind_csv: Path, z_height: float | None) -> float:
+    """Infer the z-level for single-layer wind CSV data."""
     df = pd.read_csv(wind_csv, usecols=["Points:2"])
     z = df["Points:2"].to_numpy(dtype=float)
     z_min = float(np.min(z))

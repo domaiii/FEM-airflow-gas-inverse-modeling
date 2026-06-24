@@ -18,7 +18,7 @@ gt_wind_mapping:
   max_xy_dist: 0.2
 ns_solver_parameters:
   solver: WFNS
-  regularization: smooth
+  regularization: gradient
   maxit: 25
   solver_tol: 0.01
   damping: 0.5
@@ -26,4 +26,4 @@ ns_solver_parameters:
   weight_misfit: 10.0
   weight_pde_res: 1.0
   weight_reg: 1e-5
-  weight_boundary: 1.0
+  weight_wfns_bc: 1.0

@@ -1,3 +1,5 @@
+"""Scenario workflow for configured airflow estimation cases."""
+
 import json
 import time
 from dataclasses import dataclass
@@ -10,9 +12,10 @@ from NS_wind_est.airflow_estimator import AirflowEstimator, AirflowResult
 from NS_wind_est.scenario import ScenarioConfig
 
 
-
 @dataclass(frozen=True)
 class ScenarioRunResult:
+    """Paths produced by a scenario run."""
+
     output_root: Path
     result_dirs: tuple[Path, ...]
 
@@ -22,6 +25,7 @@ class ScenarioRunResult:
 
 
 def save_velocity_csv(path: Path, velocity: fem.Function) -> None:
+    """Write a velocity function to the CSV format used by the examples."""
     coords = velocity.function_space.tabulate_dof_coordinates()
     values = velocity.x.array.reshape(-1, velocity.function_space.dofmap.bs)
 
@@ -38,6 +42,7 @@ def save_velocity_csv(path: Path, velocity: fem.Function) -> None:
 
 
 def create_estimator(config: ScenarioConfig) -> AirflowEstimator:
+    """Create and configure an estimator from a scenario config."""
     estimator = AirflowEstimator.from_mesh(config.mesh)
 
     wall_names = estimator.match_boundary_names(config.wall_pattern)
@@ -57,11 +62,13 @@ def create_estimator(config: ScenarioConfig) -> AirflowEstimator:
         weight_misfit=config.weight_misfit,
         weight_pde_res=config.weight_pde_res,
         weight_reg=config.weight_reg,
-        weight_boundary=config.weight_boundary,
+        weight_wfns_bc=config.weight_wfns_bc,
     )
     return estimator
 
+
 def write_outputs(result_dir: Path, velocity: fem.Function, metadata: dict) -> None:
+    """Write CSV, quick-look plot, and metadata for one estimation run."""
     from NS_wind_est.visualizer import plot_wind_csv
 
     estimate_path = result_dir / "wind_estimate.csv"
@@ -84,13 +91,13 @@ def write_outputs(result_dir: Path, velocity: fem.Function, metadata: dict) -> N
 def solve_estimator(
     estimator: AirflowEstimator, config: ScenarioConfig
 ) -> AirflowResult:
+    """Run the solver selected in the scenario config."""
     solver_name = config.solver.strip().upper()
     if solver_name == "SFNS":
         return estimator.solve_SFNS(
             maxit=config.maxit,
             solver_tol=config.solver_tol,
             damping=config.damping,
-            regularization=config.regularization,
             verbose=False,
         )
     if solver_name == "WFNS":
@@ -98,7 +105,6 @@ def solve_estimator(
             maxit=config.maxit,
             solver_tol=config.solver_tol,
             damping=config.damping,
-            regularization=config.regularization,
             verbose=False,
         )
     raise ValueError(
@@ -114,6 +120,7 @@ def run_case(
     sample_size: int | None,
     verbose: bool,
 ) -> None:
+    """Run one scenario/sample-size/sample-CSV combination."""
     result_dir.mkdir(parents=True, exist_ok=True)
 
     mapping_info = estimator.set_measurements_from_csv(
@@ -154,9 +161,10 @@ def run_case(
         "weight_misfit": config.weight_misfit,
         "weight_pde_res": config.weight_pde_res,
         "weight_reg": config.weight_reg,
-        "weight_boundary": config.weight_boundary,
+        "weight_wfns_bc": config.weight_wfns_bc,
         "n_discretization_points": int(u_est.function_space.tabulate_dof_coordinates().shape[0]),
         "estimation_runtime_sec": float(estimation_runtime_sec),
+        "solver_used": status.solver,
         "solver_converged": status.converged,
         "solver_iterations": status.iterations,
         "solver_max_iterations": status.max_iterations,
@@ -169,15 +177,17 @@ def run_case(
     if verbose:
         print("---")
 
-
-
 def run_scenario(
     scenario: str | Path | ScenarioConfig,
     samples: str | Path | None = None,
     *,
     verbose: bool = False,
 ) -> ScenarioRunResult:
-    """Run one configured scenario for one sample CSV or all scenario samples."""
+    """Run one configured scenario for one sample CSV or all scenario samples.
+
+    Passing ``samples=None`` means all ``sample_points*.csv`` files in the
+    scenario sample directory are used. Passing a path runs only that CSV.
+    """
     config = scenario if isinstance(scenario, ScenarioConfig) else ScenarioConfig.load(scenario)
     if samples is not None:
         sample_files = [Path(samples).resolve(strict=True)]

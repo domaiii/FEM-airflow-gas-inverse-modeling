@@ -1,3 +1,5 @@
+"""High-level API for Navier-Stokes based airflow estimation."""
+
 import numpy as np
 import pandas as pd
 import re
@@ -17,6 +19,9 @@ from NS_wind_est.airflow_solvers import (
 
 @dataclass(frozen=True, slots=True)
 class SolverStatus:
+    """Solver information reported during estimation."""
+
+    solver: str
     converged: bool
     iterations: int
     max_iterations: int
@@ -26,6 +31,13 @@ class SolverStatus:
 
 @dataclass(frozen=True, slots=True)
 class AirflowResult:
+    """Result returned by an airflow solve.
+
+    Contains the collapsed velocity field, the collapsed pressure field,
+    the original mixed velocity-pressure function, and solver status
+    information.
+    """
+
     velocity: fem.Function
     pressure: fem.Function
     mixed: fem.Function
@@ -33,13 +45,20 @@ class AirflowResult:
 
 
 class AirflowEstimator:
+    """Estimate a wind field from sparse velocity measurements and an FE domain.
+
+    The estimator exposes the direct Python API. It keeps all state that belongs
+    to one estimation setup in one object: mesh, mixed function space, boundary
+    conditions, measurements, solver configuration, and the `AirflowResult`.
+    """
 
     def __init__(
         self,
         domain: mesh.Mesh,
-        facet_tags: mesh.MeshTags | None = None,
+        facet_tags: mesh.MeshTags,
+        boundary_name_to_id: dict[str, int],
     ):
-        """Create an estimator for an existing DOLFINx mesh."""
+        """Create an estimator from an existing DOLFINx domain."""
         self.domain = domain
         self.facet_tags = facet_tags
 
@@ -61,91 +80,69 @@ class AirflowEstimator:
             domain.topology.dim - 1, domain.topology.dim
         )
 
-        self.viscosity = 1e-5
+        self.viscosity = 1.5e-5
         self.weight_misfit = 1e2
         self.weight_pde_res = 1e0
         self.weight_reg = 1e-2
-        self.weight_boundary = 1e0
-        self.regularization_mode = "smooth"
+        self.weight_wfns_bc = 1e0
+
+        self.regularization_mode = "gradient"
 
         self.bcs: list[fem.DirichletBC] = []
         self.last_result: AirflowResult | None = None
-        self._boundary_name_to_id: dict[str, int] = {}
+        self._boundary_name_to_id: dict[str, int] = dict(boundary_name_to_id)
 
     @classmethod
     def from_mesh(
         cls,
         meshfile: str | Path,
         *,
-        comm=MPI.COMM_WORLD,
-        gdim: int = 2,
-    ) -> "AirflowEstimator":
-        """Create an estimator directly from a Gmsh ``.msh`` file."""
-        meshfile = Path(meshfile).resolve(strict=True)
-        domain, _, facet_tags = dio.gmshio.read_from_msh(
-            str(meshfile), comm, gdim=gdim
-        )
-        return cls.from_domain(
-            domain,
-            facet_tags,
-            meshfile=meshfile,
-        )
+        comm=MPI.COMM_WORLD
+        ) -> "AirflowEstimator":
+        """Create an estimator directly from a Gmsh `.msh` file.
 
-    @classmethod
-    def from_domain(
-        cls,
-        domain: mesh.Mesh,
-        facet_tags: mesh.MeshTags | None = None,
-        meshfile: str | Path | None = None,
-    ) -> "AirflowEstimator":
-        """Create an estimator from an existing DOLFINx mesh."""
-        estimator = cls(domain, facet_tags)
-
-        if meshfile is not None:
-            estimator._boundary_name_to_id = cls._read_physical_name_map(
-                meshfile, dim=domain.topology.dim - 1
-            )
-
-        return estimator
+        Physical boundary names from the Gmsh file are loaded as well, so
+        named helpers such as :meth:`set_no_slip_bc` can be used immediately.
+        """
+        msh = Path(meshfile).resolve(strict=True)
+        domain, _, facet_tags = dio.gmshio.read_from_msh(str(msh), comm, gdim=2)
+        boundary_name_to_id = cls._read_physical_name_map(msh, dim=domain.topology.dim - 1)
+        return cls(domain, facet_tags, boundary_name_to_id)
 
     @property
     def boundary_names(self) -> tuple[str, ...]:
-        """Physical boundary names available for named boundary conditions."""
+        """Names of all available physical boundary groups."""
         return tuple(self._boundary_name_to_id.keys())
 
     def match_boundary_names(self, pattern: str) -> list[str]:
         """Return physical boundary names matching a case-insensitive regex."""
-        self._ensure_boundary_name_map()
         regex = re.compile(pattern, re.IGNORECASE)
         return [name for name in self.boundary_names if regex.search(name)]
 
-    def _ensure_boundary_name_map(self):
-        if self.facet_tags is None:
-            raise RuntimeError("facet_tags is not set.")
-        if not self._boundary_name_to_id:
-            raise RuntimeError(
-                "No boundary names available. Construct the estimator with from_mesh() "
-                "or pass meshfile to from_domain()."
+    def _boundary_ids(self, names: str | list[str]) -> list[int]:
+        """Return boundary id(s) for given boundary name(s)."""
+        if isinstance(names, str):
+            names = [names]
+        else:
+            names = list(names)
+
+        missing = [name for name in names if name not in self._boundary_name_to_id]
+        if missing:
+            available = ", ".join(self.boundary_names) or "<none>"
+            raise ValueError(
+                f"Unknown boundary name(s): {missing}. "
+                f"Available boundaries: {available}"
             )
 
-    def set_no_slip_bc(self, wall_names: str | list[str]):
+        return [self._boundary_name_to_id[name] for name in names]
+
+    def set_no_slip_bc(self, no_slip_bdry_names: str | list[str]):
         """
-        Apply no-slip (u=0) boundary condition on the given physical boundaries.
-
-        Parameters
-        ----------
-        wall_names : str or list[str]
-            Physical group names, e.g. 'Walls' or ['Walls', 'Obstacles'].
+        Apply no-slip (u=0) boundary condition on the given physical group(s).
         """
-        self._ensure_boundary_name_map()
-
-        if isinstance(wall_names, str):
-            names = [wall_names]
-        else:
-            names = list(wall_names)
-
+        boundary_ids = self._boundary_ids(no_slip_bdry_names)
         facets = np.concatenate([
-            self.facet_tags.find(self._boundary_name_to_id[name]) for name in names
+            self.facet_tags.find(boundary_id) for boundary_id in boundary_ids
         ])
 
         u_D = fem.Function(self.V)
@@ -158,24 +155,13 @@ class AirflowEstimator:
         self.add_dirichlet_bc(bc)
         return bc
 
-    def set_zero_pressure_bc(self, outlet_names: str | list[str]):
+    def set_zero_pressure_bc(self, pressure0_bdry_names: str | list[str]):
         """
-        Apply p=0 boundary condition on the given outlet boundaries.
-
-        Parameters
-        ----------
-        outlet_names : str or list[str]
-            Physical group names, e.g. 'Outflow'.
+        Apply p=0 boundary condition on the given outlet physical group(s).
         """
-        self._ensure_boundary_name_map()
-
-        if isinstance(outlet_names, str):
-            names = [outlet_names]
-        else:
-            names = list(outlet_names)
-
+        boundary_ids = self._boundary_ids(pressure0_bdry_names)
         facets = np.concatenate([
-            self.facet_tags.find(self._boundary_name_to_id[name]) for name in names
+            self.facet_tags.find(boundary_id) for boundary_id in boundary_ids
         ])
 
         p_zero = fem.Function(self.Q)
@@ -187,11 +173,11 @@ class AirflowEstimator:
         bc = fem.dirichletbc(p_zero, dofs, self.W1)
         self.add_dirichlet_bc(bc)
         return bc
-        
+
 
     @staticmethod
     def build_mixed_space(domain, deg_u=2, deg_p=1):
-        """Erzeugt das gemischte (velocity-pressure) Funktionsraumtuple."""
+        """Build the mixed velocity-pressure function spaces."""
         elem_u = element("Lagrange", domain.basix_cell(), deg_u, shape=(domain.geometry.dim,))
         elem_p = element("Lagrange", domain.basix_cell(), deg_p)
         mixed_elem = mixed_element([elem_u, elem_p])
@@ -206,6 +192,7 @@ class AirflowEstimator:
     def _read_physical_name_map(
         meshfile: str | Path, dim: int | None = None
     ) -> dict[str, int]:
+        """Read physical groups with name (str) and group id (int). """
         import gmsh
 
         meshfile = Path(meshfile).resolve(strict=True)
@@ -217,22 +204,24 @@ class AirflowEstimator:
         finally:
             gmsh.finalize()
 
-    @staticmethod
-    def _num_dofs(space) -> int:
-        return space.dofmap.index_map.size_global * space.dofmap.index_map_bs
-
-
-    @staticmethod
-    def normalize_regularization_mode(mode: str) -> str:
-        mode_norm = mode.strip().lower()
-        if mode_norm not in {"smooth", "value"}:
-            raise ValueError("regularization mode must be 'smooth' or 'value'.")
-        return mode_norm
-
     def set_regularization(self, mode: str):
-        self.regularization_mode = self.normalize_regularization_mode(mode)
+        """Set the default regularization mode.
+
+        Available modes are:
+
+        - `"gradient"`: penalizes spatial variation of the velocity field via
+          `||grad(u)||`. This favors smooth wind fields.
+        - `"magnitude"`: penalizes the velocity magnitude via `||u||`. This
+          favors smaller wind speeds where measurements and PDE terms allow it.
+        """
+        norm_mode = mode.strip().lower()
+        if norm_mode not in {"gradient", "magnitude"}:
+            raise ValueError("regularization mode must be 'gradient' or 'magnitude'.")
+
+        self.regularization_mode = norm_mode
 
     def _build_solver_context(self) -> AirflowSolverConfig:
+        """Configuration parameters for solver initialization."""
         return AirflowSolverConfig(
             domain=self.domain,
             W=self.W,
@@ -245,14 +234,16 @@ class AirflowEstimator:
             weight_misfit=self.weight_misfit,
             weight_pde_res=self.weight_pde_res,
             weight_reg=self.weight_reg,
-            weight_boundary=self.weight_boundary,
+            weight_wfns_bc=self.weight_wfns_bc,
             regularization_mode=self.regularization_mode,
         )
 
     def _build_result(
-        self, mixed: fem.Function, solver_status: dict
+        self, mixed: fem.Function, solver_status: dict, solver_name: str
     ) -> AirflowResult:
+        """Returns `AirflowResult` after the estimation has terminated."""
         status = SolverStatus(
+            solver=solver_name,
             converged=bool(solver_status["converged"]),
             iterations=int(solver_status["iterations"]),
             max_iterations=int(solver_status["max_iterations"]),
@@ -260,51 +251,92 @@ class AirflowEstimator:
             final_relative_change=float(solver_status["final_relative_change"]),
         )
         result = AirflowResult(
-            velocity=mixed.sub(0).collapse(),
-            pressure=mixed.sub(1).collapse(),
-            mixed=mixed,
-            status=status,
+            velocity = mixed.sub(0).collapse(),
+            pressure = mixed.sub(1).collapse(),
+            mixed = mixed,
+            status = status,
         )
         self.last_result = result
         return result
 
     def solve_SFNS(
         self,
-        maxit: int = 10,
+        maxit: int = 25,
         solver_tol: float = 1e-2,
         damping: float | None = None,
-        regularization: str | None = None,
         verbose: bool = False,
     ) -> AirflowResult:
+        """Solve with the strong-form Navier-Stokes estimator.
+
+        This solver minimizes the strong-form PDE residual, measurement
+        mismatch, and regularization terms. Boundary conditions are imposed
+        strongly through Dirichlet constraints.
+
+        Parameters
+        ----------
+        maxit
+            Maximum number of fixed-point iterations.
+        solver_tol
+            Relative change tolerance for fixed-point convergence.
+        damping
+            Optional damping factor for fixed-point updates. If `None`, no damping
+            is applied.
+        verbose
+            If `True`, print iteration diagnostics.
+        """
         solver = SfnsSolver(self._build_solver_context())
         mixed = solver.solve(
             maxit=maxit,
             solver_tol=solver_tol,
             damping=damping,
-            regularization=regularization,
             verbose=verbose,
         )
-        return self._build_result(mixed, solver.last_status)
+        return self._build_result(mixed, solver.last_status, "SFNS")
 
     def solve_WFNS(
         self,
         maxit: int = 10,
         solver_tol: float = 1e-3,
         damping: float | None = None,
-        regularization: str | None = None,
         verbose: bool = False,
     ) -> AirflowResult:
+        """Solve with the weak-form Navier-Stokes estimator.
+
+        This solver treats the weak-form PDE residual, measurement mismatch,
+        regularization, and boundary conditions as weighted least-squares terms.
+        It is kept available for comparison with the strong-form workflow.
+
+        Parameters
+        ----------
+        maxit
+            Maximum number of fixed-point iterations.
+        solver_tol
+            Relative change tolerance for fixed-point convergence.
+        damping
+            Optional damping factor for fixed-point updates. If `None`, no damping
+            is applied.
+        verbose
+            If `True`, print iteration diagnostics.
+
+        References
+        ----------
+        Wiedemann, T., Scheffler, M., Shutin, D., & Lilienthal, A. J. (2025).
+        Physics-informed robotic airflow exploration and mapping with a
+        swarm of mobile robots. The International Journal of Robotics
+        Research, 44(13), 2105-2125.
+        """
+
         solver = WfnsSolver(self._build_solver_context())
         mixed = solver.solve(
             maxit=maxit,
             solver_tol=solver_tol,
             damping=damping,
-            regularization=regularization,
             verbose=verbose,
         )
-        return self._build_result(mixed, solver.last_status)
+        return self._build_result(mixed, solver.last_status, "WFNS")
 
     def add_dirichlet_bc(self, bc: fem.DirichletBC | list[fem.DirichletBC]):
+        """Register one or more DOLFINx Dirichlet boundary conditions."""
         if isinstance(bc, list):
             self.bcs += bc
         else:
@@ -316,17 +348,12 @@ class AirflowEstimator:
         measurement_values: np.ndarray,
         clear_existing: bool = True,
     ):
-        """
-        Set explicit wind measurements in mixed space W.
+        """Set explicit wind measurements in mixed space W.
 
-        Parameters
-        ----------
-        measurement_ids_W : np.ndarray
-            Flattened W-indices for velocity components.
-        measurement_values : np.ndarray
-            Flattened measurement values aligned with measurement_ids_W.
-        clear_existing : bool
-            If True, clear all previous measurements first.
+        Sets the measurements manually at flattend W-indices for velocity
+        components. `measurement_values` are the flattened measurement values
+        aligned with `measurement_ids_W`. If `clear_existing` set to `True`,
+        all previously added/saved measurements are cleared first.
         """
         ids = np.asarray(measurement_ids_W, dtype=np.int32).reshape(-1)
         values = np.asarray(measurement_values, dtype=float).reshape(-1)
@@ -354,7 +381,34 @@ class AirflowEstimator:
         noise_std: float | None = None,
         max_xy_dist: float | None = None,
     ) -> dict[str, float]:
-        """Load wind samples from CSV and map them to nearest velocity nodes."""
+        """Load wind samples from CSV and map them to nearest velocity nodes.
+
+        The CSV must contain `Points:0`, `Points:1`, `U:0` and `U:1`.
+        Further columns, such as `Points:2` or `U:2`, are allowed but
+        ignored. Samples are assigned to velocity nodes by nearest-neighbor
+        mapping in XY coordinates.
+
+        Parameters
+        ----------
+        samples_csv
+            Path to the CSV file containing sparse wind measurements.
+        count
+            Optional number of rows to use only a part of the measurements in
+            the CSV. If `None`, all are used.
+        noise_std
+            Optional standard deviation of zero-mean Gaussian noise added to
+            the measured velocity components. If `None`, no noise is added.
+        max_xy_dist
+            Optional maximum allowed XY distance between a CSV sample point and
+            the nearest velocity node. If exceeded, a `ValueError` is raised.
+
+        Returns
+        -------
+        dict[str, float]
+            Mapping metadata with the number of input samples, number of used
+            samples, number of dropped duplicate-node samples, and maximum XY
+            mapping distance.
+        """
         samples_csv = Path(samples_csv).resolve(strict=True)
         df = pd.read_csv(samples_csv)
 
@@ -430,13 +484,33 @@ class AirflowEstimator:
         weight_misfit: float | None = None,
         weight_pde_res: float | None = None,
         weight_reg: float | None = None,
-        weight_boundary: float | None = None,
+        weight_wfns_bc: float | None = None,
     ) -> None:
-        if viscosity: self.viscosity = viscosity
-        if weight_misfit: self.weight_misfit = weight_misfit
-        if weight_pde_res: self.weight_pde_res = weight_pde_res
-        if weight_reg: self.weight_reg = weight_reg
-        if weight_boundary: self.weight_boundary = weight_boundary
+        """Update weights of the solver objective terms.
+
+        Arguments left as `None` keep their previous values.
+
+        Parameters
+        ----------
+        viscosity
+            Kinematic viscosity of the medium in m^2/s. The estimator default is
+            1.5e-5, roughly the viscosity of air.
+        weight_misfit
+            Weights the mismatch between the measurements and the estimated solution
+            at the corresponding locations.
+        weight_pde_res
+            Weights how well the solution satisfies the Navier-Stokes equations.
+        weight_reg
+            Weights the selected regularization term.
+        weight_wfns_bc
+            Weights the boundary-condition penalty used by WFNS. SFNS enforces
+            boundary conditions strongly, so this value has no effect there.
+        """
+        if viscosity is not None:       self.viscosity = viscosity
+        if weight_misfit is not None:   self.weight_misfit = weight_misfit
+        if weight_pde_res is not None:  self.weight_pde_res = weight_pde_res
+        if weight_reg is not None:      self.weight_reg = weight_reg
+        if weight_wfns_bc is not None:  self.weight_wfns_bc = weight_wfns_bc
 
     def get_measurement_coordinates(self) -> np.ndarray:
         """Return coordinates of the currently configured measurements."""

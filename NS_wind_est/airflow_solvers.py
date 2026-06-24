@@ -27,7 +27,7 @@ class AirflowSolverConfig:
     weight_misfit: float
     weight_pde_res: float
     weight_reg: float
-    weight_boundary: float
+    weight_wfns_bc: float
     regularization_mode: str
 
 
@@ -47,13 +47,12 @@ class BaseAirflowSolver(ABC):
               maxit: int,
               solver_tol: float,
               damping: float | None = None,
-              regularization: str | None = None,
               verbose: bool = False):
         wh = fem.Function(self.ctx.W)
         wh_prev = fem.Function(self.ctx.W)
         wh_prev.x.array[:] = 0.0
 
-        reg_mode = self._resolve_regularization_mode(regularization)
+        reg_mode = self.ctx.regularization_mode
         self._validate()
         context = self._prepare_solve(reg_mode)
 
@@ -94,18 +93,13 @@ class BaseAirflowSolver(ABC):
     @staticmethod
     def normalize_regularization_mode(mode: str) -> str:
         mode_norm = mode.strip().lower()
-        if mode_norm not in {"smooth", "value"}:
-            raise ValueError("regularization mode must be 'smooth' or 'value'.")
+        if mode_norm not in {"gradient", "magnitude"}:
+            raise ValueError("regularization mode must be 'gradient' or 'magnitude'.")
         return mode_norm
 
     def _validate(self):
         if not self.ctx.bcs:
             raise ValueError("No boundary conditions set. Use add_dirichlet_bc() to add BCs.")
-
-    def _resolve_regularization_mode(self, mode: str | None = None) -> str:
-        if mode is None:
-            return self.ctx.regularization_mode
-        return self.normalize_regularization_mode(mode)
 
     def _prepare_solve(self, reg_mode: str):
         return None
@@ -155,9 +149,9 @@ class BaseAirflowSolver(ABC):
         values = wh.x.array[np.asarray(bc_dofs, dtype=np.int32)]
         return float(np.sum(values ** 2))
 
-    def _value_regularization(self, wh: fem.Function, reg_mode: str) -> float:
+    def _magnitude_regularization(self, wh: fem.Function, reg_mode: str) -> float:
         uh, _ = ufl.split(wh)
-        if reg_mode == "value":
+        if reg_mode == "magnitude":
             form = fem.form(inner(uh, uh) * dx)
         else:
             form = fem.form(inner(grad(uh), grad(uh)) * dx)
@@ -209,7 +203,7 @@ class SfnsSolver(BaseAirflowSolver):
         Rdiv_v = div(v)
 
         a_pde = (beta * (inner(Rmom_u, Rmom_v) + Rdiv_u * Rdiv_v)) * dx
-        if reg_mode == "value":
+        if reg_mode == "magnitude":
             a_reg = (gamma * inner(u, v)) * dx
         else:
             a_reg = (gamma * inner(grad(u), grad(v))) * dx
@@ -264,7 +258,7 @@ class SfnsSolver(BaseAirflowSolver):
 
         pde_form = fem.form((inner(Rmom, Rmom) + Rdiv * Rdiv) * dx)
         pde = float(domain.comm.allreduce(fem.assemble_scalar(pde_form), op=MPI.SUM))
-        reg = self._value_regularization(wh, reg_mode)
+        reg = self._magnitude_regularization(wh, reg_mode)
         misfit = self._measurement_misfit(wh)
 
         return {
@@ -285,7 +279,7 @@ class WfnsSolver(BaseAirflowSolver):
 
     def __init__(self, ctx: AirflowSolverConfig):
         super().__init__(ctx)
-        self._smooth_regularization_operator: sps.csr_matrix | None = None
+        self._gradient_regularization_operator: sps.csr_matrix | None = None
 
     def _collect_bc_dofs(self) -> np.ndarray:
         bc_dofs: list[int] = []
@@ -303,11 +297,11 @@ class WfnsSolver(BaseAirflowSolver):
     def _build_linear_regularization_operator(self, reg_mode: str) -> sps.csr_matrix:
         num_total_dofs = self._num_dofs(self.ctx.W)
 
-        if reg_mode == "value":
+        if reg_mode == "magnitude":
             return sps.identity(num_total_dofs, format="csr")
 
-        if self._smooth_regularization_operator is not None:
-            return self._smooth_regularization_operator
+        if self._gradient_regularization_operator is not None:
+            return self._gradient_regularization_operator
 
         coords = np.asarray(
             self.ctx.V.tabulate_dof_coordinates(),
@@ -316,8 +310,8 @@ class WfnsSolver(BaseAirflowSolver):
 
         num_points = len(coords)
         if num_points < 2:
-            self._smooth_regularization_operator = sps.csr_matrix((0, num_total_dofs))
-            return self._smooth_regularization_operator
+            self._gradient_regularization_operator = sps.csr_matrix((0, num_total_dofs))
+            return self._gradient_regularization_operator
 
         k = min(5, num_points)
         tree = cKDTree(coords)
@@ -346,11 +340,11 @@ class WfnsSolver(BaseAirflowSolver):
                     vals.extend([weight, -weight])
                     row_id += 1
 
-        self._smooth_regularization_operator = sps.csr_matrix(
+        self._gradient_regularization_operator = sps.csr_matrix(
             (vals, (rows, cols)),
             shape=(row_id, num_total_dofs),
         )
-        return self._smooth_regularization_operator
+        return self._gradient_regularization_operator
 
     def _prepare_solve(self, reg_mode: str):
         num_total_dofs = self._num_dofs(self.ctx.W)
@@ -367,7 +361,7 @@ class WfnsSolver(BaseAirflowSolver):
         free_pde_rows[bc_dofs] = False
 
         fixed_matrix = sps.vstack([
-            np.sqrt(self.ctx.weight_boundary) * R_sp,
+            np.sqrt(self.ctx.weight_wfns_bc) * R_sp,
             np.sqrt(self.ctx.weight_misfit) * M_sp,
             np.sqrt(self.ctx.weight_reg) * reg_op,
         ]).tocsr()
@@ -438,12 +432,12 @@ class WfnsSolver(BaseAirflowSolver):
             "misfit_unweighted": misfit,
             "pde_weighted": self.ctx.weight_pde_res * pde,
             "reg_weighted": self.ctx.weight_reg * reg,
-            "boundary_weighted": self.ctx.weight_boundary * boundary,
+            "boundary_weighted": self.ctx.weight_wfns_bc * boundary,
             "misfit_weighted": self.ctx.weight_misfit * misfit,
             "objective_total_weighted": (
                 self.ctx.weight_pde_res * pde
                 + self.ctx.weight_reg * reg
-                + self.ctx.weight_boundary * boundary
+                + self.ctx.weight_wfns_bc * boundary
                 + self.ctx.weight_misfit * misfit
             ),
         }
