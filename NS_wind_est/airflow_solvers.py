@@ -1,3 +1,5 @@
+"""Backend solvers for Navier-Stokes airflow estimation."""
+
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
 
@@ -16,6 +18,8 @@ from ufl import div, dot, dx, grad, inner
 
 @dataclass(slots=True)
 class AirflowSolverConfig:
+    """Shared numerical context passed from the estimator to solver backends."""
+
     domain: mesh.Mesh
     W: fem.FunctionSpace
     V: fem.FunctionSpace
@@ -32,6 +36,7 @@ class AirflowSolverConfig:
 
 
 class BaseAirflowSolver(ABC):
+    """Base class for fixed-point airflow solver backends."""
 
     def __init__(self, ctx: AirflowSolverConfig):
         self.ctx = ctx
@@ -48,6 +53,7 @@ class BaseAirflowSolver(ABC):
               solver_tol: float,
               damping: float | None = None,
               verbose: bool = False):
+        """Run fixed-point iterations and return the mixed solution function."""
         wh = fem.Function(self.ctx.W)
         wh_prev = fem.Function(self.ctx.W)
         wh_prev.x.array[:] = 0.0
@@ -66,8 +72,6 @@ class BaseAirflowSolver(ABC):
             diff = np.linalg.norm(wh.x.array - wh_prev.x.array) / (np.linalg.norm(wh.x.array) + 1e-10)
             iterations = k + 1
             final_diff = float(diff)
-            # if verbose:
-            #    self._report_iteration(k, diff, wh, reg_mode, context)
             if diff < solver_tol:
                 converged = True
                 break
@@ -90,28 +94,26 @@ class BaseAirflowSolver(ABC):
         self._finalize_solve(context)
         return wh
 
-    @staticmethod
-    def normalize_regularization_mode(mode: str) -> str:
-        mode_norm = mode.strip().lower()
-        if mode_norm not in {"gradient", "magnitude"}:
-            raise ValueError("regularization mode must be 'gradient' or 'magnitude'.")
-        return mode_norm
-
     def _validate(self):
+        """Check solver prerequisites before iteration starts."""
         if not self.ctx.bcs:
             raise ValueError("No boundary conditions set. Use add_dirichlet_bc() to add BCs.")
 
     def _prepare_solve(self, reg_mode: str):
+        """Build optional solver-specific data before the iteration loop."""
         return None
 
     def _finalize_solve(self, context):
+        """Release optional solver-specific data after the iteration loop."""
         return None
 
     @staticmethod
     def _num_dofs(space) -> int:
+        """Return the global number of scalar degrees of freedom."""
         return space.dofmap.index_map.size_global * space.dofmap.index_map_bs
 
     def _build_weak_form_system(self, wh_prev: fem.Function):
+        """Assemble the linearized weak-form Navier-Stokes system."""
         (u, p) = ufl.TrialFunctions(self.ctx.W)
         (v, q) = ufl.TestFunctions(self.ctx.W)
         uh_prev, _ = ufl.split(wh_prev)
@@ -136,11 +138,13 @@ class BaseAirflowSolver(ABC):
         return K, f
 
     def _measurement_misfit(self, wh: fem.Function) -> float:
+        """Evaluate squared mismatch at configured measurement dofs."""
         diff = wh.x.array - self.ctx.w_measured.x.array
         m_idx = self.ctx.measurement_ids_W
         return float(np.sum(diff[m_idx] ** 2))
 
     def _boundary_penalty(self, wh: fem.Function) -> float:
+        """Evaluate squared values on dofs constrained by boundary conditions."""
         bc_dofs = []
         for bc in self.ctx.bcs:
             bc_dofs.extend(map(int, bc.dof_indices()[0]))
@@ -150,6 +154,7 @@ class BaseAirflowSolver(ABC):
         return float(np.sum(values ** 2))
 
     def _magnitude_regularization(self, wh: fem.Function, reg_mode: str) -> float:
+        """Evaluate the selected velocity regularization functional."""
         uh, _ = ufl.split(wh)
         if reg_mode == "magnitude":
             form = fem.form(inner(uh, uh) * dx)
@@ -157,21 +162,13 @@ class BaseAirflowSolver(ABC):
             form = fem.form(inner(grad(uh), grad(uh)) * dx)
         return float(self.ctx.domain.comm.allreduce(fem.assemble_scalar(form), op=MPI.SUM))
 
-    def _weak_form_residual(self, wh: fem.Function) -> float:
-        K, f = self._build_weak_form_system(wh)
-        residual = f.duplicate()
-        K.mult(wh.x.petsc_vec, residual)
-        residual.axpy(-1.0, f)
-        return float(residual.norm(PETSc.NormType.NORM_2) ** 2)
-
     @abstractmethod
     def _solve_step(self, wh_prev: fem.Function, wh: fem.Function, reg_mode: str, context):
+        """Compute one fixed-point update into `wh`."""
         pass
 
-    def _report_iteration(self, k: int, diff: float, wh: fem.Function, reg_mode: str, context):
-        print(f"Iteration {k}: Rel. Error = {diff:.2e}")
-
     def _report_summary(self, wh: fem.Function, reg_mode: str, context):
+        """Print objective-term diagnostics for the final iterate."""
         terms = self._evaluate_terms(wh, reg_mode, context)
         if not terms:
             return
@@ -180,12 +177,15 @@ class BaseAirflowSolver(ABC):
             print(f"{key:>26}: {value:.6e}")
 
     def _evaluate_terms(self, wh: fem.Function, reg_mode: str, context) -> dict[str, float]:
+        """Return objective-term diagnostics for reporting."""
         return {}
 
 
 class SfnsSolver(BaseAirflowSolver):
+    """Strong-form Navier-Stokes residual solver backend."""
 
     def _build_system(self, wh_prev: fem.Function, reg_mode: str):
+        """Assemble the SFNS normal-equation system for one update."""
         W = wh_prev.function_space
         domain = W.mesh
 
@@ -237,6 +237,7 @@ class SfnsSolver(BaseAirflowSolver):
         return A, b
 
     def _solve_step(self, wh_prev: fem.Function, wh: fem.Function, reg_mode: str, context):
+        """Solve one SFNS linear system with PETSc LU."""
         A, b = self._build_system(wh_prev, reg_mode)
         ksp = PETSc.KSP().create(A.comm)
         ksp.setOperators(A)
@@ -249,6 +250,7 @@ class SfnsSolver(BaseAirflowSolver):
         wh.x.array[:] = wh.x.petsc_vec.getArray(readonly=True)
 
     def _evaluate_terms(self, wh: fem.Function, reg_mode: str, context) -> dict[str, float]:
+        """Evaluate unweighted and weighted SFNS objective terms."""
         domain = self.ctx.domain
         nu = fem.Constant(domain, PETSc.ScalarType(self.ctx.viscosity))
 
@@ -276,12 +278,14 @@ class SfnsSolver(BaseAirflowSolver):
         }
 
 class WfnsSolver(BaseAirflowSolver):
+    """Weak-form least-squares Navier-Stokes solver backend."""
 
     def __init__(self, ctx: AirflowSolverConfig):
         super().__init__(ctx)
         self._gradient_regularization_operator: sps.csr_matrix | None = None
 
     def _collect_bc_dofs(self) -> np.ndarray:
+        """Collect scalar dofs touched by configured Dirichlet conditions."""
         bc_dofs: list[int] = []
         for bc in self.ctx.bcs:
             bc_dofs.extend(map(int, bc.dof_indices()[0]))
@@ -289,12 +293,14 @@ class WfnsSolver(BaseAirflowSolver):
 
     @staticmethod
     def _selection_matrix(indices: np.ndarray, num_cols: int) -> sps.csr_matrix:
+        """Build a sparse matrix selecting the requested scalar dofs."""
         indices = np.asarray(indices, dtype=np.int32).reshape(-1)
         rows = np.arange(indices.size, dtype=np.int32)
         vals = np.ones(indices.size, dtype=float)
         return sps.csr_matrix((vals, (rows, indices)), shape=(indices.size, num_cols))
 
     def _build_linear_regularization_operator(self, reg_mode: str) -> sps.csr_matrix:
+        """Build the sparse WFNS regularization operator."""
         num_total_dofs = self._num_dofs(self.ctx.W)
 
         if reg_mode == "magnitude":
@@ -347,6 +353,7 @@ class WfnsSolver(BaseAirflowSolver):
         return self._gradient_regularization_operator
 
     def _prepare_solve(self, reg_mode: str):
+        """Precompute sparse WFNS matrices that do not change per iteration."""
         num_total_dofs = self._num_dofs(self.ctx.W)
 
         bc_dofs = self._collect_bc_dofs()
@@ -382,6 +389,7 @@ class WfnsSolver(BaseAirflowSolver):
         }
 
     def _solve_step(self, wh_prev: fem.Function, wh: fem.Function, reg_mode: str, context):
+        """Solve one WFNS least-squares update with SciPy LSQR."""
         K_petsc, f_petsc = self._build_weak_form_system(wh_prev)
 
         ai, aj, av = K_petsc.getValuesCSR()
@@ -409,6 +417,7 @@ class WfnsSolver(BaseAirflowSolver):
         wh.x.scatter_forward()
 
     def _evaluate_terms(self, wh: fem.Function, reg_mode: str, context) -> dict[str, float]:
+        """Evaluate unweighted and weighted WFNS objective terms."""
         K_petsc, f_petsc = self._build_weak_form_system(wh)
 
         residual = f_petsc.duplicate()
