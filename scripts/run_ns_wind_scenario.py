@@ -17,9 +17,11 @@ def parse_args() -> argparse.Namespace:
         description="Run the NS wind estimator for one sample CSV or all scenario samples.",
     )
     parser.add_argument("scenario", help="Path to a scenario directory or scenario.yaml.")
-    group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("-s", "--samples", help="Path to one sample CSV.")
-    group.add_argument("--all-samples", action="store_true", help="Run all scenario sample CSVs.")
+    parser.add_argument(
+        "-s",
+        "--samples",
+        help="Path to one sample CSV. If omitted, all scenario samples are used.",
+    )
     parser.add_argument(
         "-v", "--verbose", action="store_true", help="Print progress details."
     )
