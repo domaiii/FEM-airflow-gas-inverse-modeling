@@ -1,4 +1,9 @@
-"""Scenario workflow for configured airflow estimation cases."""
+"""Scenario workflow for configured airflow estimation cases.
+
+This module contains the Python entry point behind the command-line scenario
+runner. It loads a `ScenarioConfig`, configures an `AirflowEstimator`, runs one
+or more sample CSVs, and writes result files plus metadata.
+"""
 
 import json
 import time
@@ -20,6 +25,7 @@ class ScenarioRunResult:
 
     @property
     def n_runs(self) -> int:
+        """Number of individual result directories created by the run."""
         return len(self.result_dirs)
 
 
@@ -106,9 +112,7 @@ def solve_estimator(
             damping=config.damping,
             verbose=False,
         )
-    raise ValueError(
-        f"Unsupported solver {config.solver}, use one of: SFNS, WFNS."
-    )
+    raise ValueError(f"Unsupported solver {config.solver}, use one of: SFNS, WFNS.")
 
 
 def run_case(
@@ -136,17 +140,22 @@ def run_case(
     change_text = f"{status.final_relative_change:.3e}"
     if verbose:
         print(
-            f"NS solver {status_text}"
+            f"NS solver {status_text} "
             f"({sample_size if sample_size is not None else 'all'} samples): "
-            f"iterations={status.iterations}/{status.max_iterations}, \nfinal_relative_change={change_text},\n solver_tol={config.solver_tol:.3e}"
+            f"iterations={status.iterations}/{status.max_iterations}, "
+            f"final_relative_change={change_text}, "
+            f"solver_tol={config.solver_tol:.3e}"
         )
     u_est = result.velocity
 
     metadata = {
         "scenario": config.name,
-        "estimator": config.solver,
         "sample_name": sample_csv.stem,
-        "sample_size": sample_size if sample_size is not None else int(mapping_info["n_input_samples"]),
+        "sample_size": (
+            sample_size
+            if sample_size is not None
+            else int(mapping_info["n_input_samples"])
+        ),
         "samples_csv": str(sample_csv),
         "mesh": str(config.mesh),
         "wind_csv": str(config.wind_csv),
@@ -161,7 +170,9 @@ def run_case(
         "weight_pde_res": config.weight_pde_res,
         "weight_reg": config.weight_reg,
         "weight_wfns_bc": config.weight_wfns_bc,
-        "n_discretization_points": int(u_est.function_space.tabulate_dof_coordinates().shape[0]),
+        "n_discretization_points": int(
+            u_est.function_space.tabulate_dof_coordinates().shape[0]
+        ),
         "estimation_runtime_sec": float(estimation_runtime_sec),
         "solver_used": status.solver,
         "solver_converged": status.converged,
@@ -176,6 +187,7 @@ def run_case(
     if verbose:
         print("---")
 
+
 def run_scenario(
     scenario: str | Path | ScenarioConfig,
     samples: str | Path | None = None,
@@ -184,16 +196,33 @@ def run_scenario(
 ) -> ScenarioRunResult:
     """Run one configured scenario for one sample CSV or all scenario samples.
 
-    Passing ``samples=None`` means all ``sample_points*.csv`` files in the
-    scenario sample directory are used. Passing a path runs only that CSV.
+    Parameters
+    ----------
+    scenario
+        Scenario directory, `scenario.yaml` path, or already loaded
+        `ScenarioConfig`.
+    samples
+        Optional path to one sample CSV. If `None`, all `sample_points*.csv`
+        files in the scenario sample directory are used.
+    verbose
+        If `True`, print progress and solver summary lines.
+
+    Returns
+    -------
+    ScenarioRunResult
+        Output root and individual result directories created by the run.
     """
-    config = scenario if isinstance(scenario, ScenarioConfig) else ScenarioConfig.load(scenario)
+    config = (
+        scenario if isinstance(scenario, ScenarioConfig) else ScenarioConfig.load(scenario)
+    )
     if samples is not None:
         sample_files = [Path(samples).resolve(strict=True)]
     else:
         sample_files = sorted(config.sample_dir.glob("sample_points*.csv"))
         if not sample_files:
-            raise FileNotFoundError(f"No sample_points*.csv files found in {config.sample_dir}")
+            raise FileNotFoundError(
+                f"No sample_points*.csv files found in {config.sample_dir}"
+            )
 
     sample_sizes = config.wind_measurement_counts or (None,)
     timestamp = time.strftime("%Y%m%d_%H%M")

@@ -1,3 +1,5 @@
+"""Command-line entry point for configured NS wind scenarios."""
+
 import argparse
 import sys
 from pathlib import Path
@@ -18,7 +20,9 @@ def parse_args() -> argparse.Namespace:
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("-s", "--samples", help="Path to one sample CSV.")
     group.add_argument("--all-samples", action="store_true", help="Run all scenario sample CSVs.")
-    parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument(
+        "-v", "--verbose", action="store_true", help="Print progress details."
+    )
     return parser.parse_args()
 
 
