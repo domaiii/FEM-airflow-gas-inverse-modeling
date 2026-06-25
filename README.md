@@ -1,5 +1,7 @@
 # NS wind estimation
 
+<img src="docs/sparse_estimation_problem.png" alt="estimation_visualization" width="40%"/>
+
 This repository contains a tool for two-dimensional steady-state airflow field
 estimation from sparse velocity measurements with a Navier-Stokes based
 estimator. The current focus is the isolated strong-form Navier-Stokes workflow
@@ -63,6 +65,11 @@ A scenario contains:
 - a `scenario.yaml` file that manages paths, measurement settings, boundary
   matching rules, solver parameters, and output locations.
 
+As a demo, the repository contains two example scenarios. Inflows are marked in 
+green, outflows in red:
+
+<img src="docs/wind_gt_10x6_2cases_streamplot.png" alt="image_scenarios" width="50%"/>
+
 Run all sample CSVs configured for the apartment example:
 
 ```bash
@@ -72,7 +79,9 @@ python scripts/run_ns_wind_scenario.py example_cases/10x6_appartment
 Run one explicit sample set:
 
 ```bash
-python scripts/run_ns_wind_scenario.py   example_cases/10x6_appartment   --samples example_cases/10x6_appartment/samples/sample_points_n400_seed0.csv
+python scripts/run_ns_wind_scenario.py \
+  example_cases/10x6_appartment \
+  --samples example_cases/10x6_appartment/samples/sample_points_n400_seed0.csv
 ```
 
 The same workflow is available from Python:
@@ -168,7 +177,7 @@ python scripts/generate_csv_samples.py ...
 They can then be loaded into the estimator with `set_measurements_from_csv(...)`.
 This CSV interface expects at least these columns:
 
-```text
+```csv
 Points:0, Points:1, U:0, U:1
 ```
 
