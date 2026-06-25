@@ -158,7 +158,7 @@ def run_case(
         ),
         "samples_csv": str(sample_csv),
         "mesh": str(config.mesh),
-        "wind_csv": str(config.wind_csv),
+        "wind_csv": None if config.wind_csv is None else str(config.wind_csv),
         "add_gaussian_noise_std": str(config.add_gaussian_noise_std),
         "solver": config.solver,
         "regularization": config.regularization,

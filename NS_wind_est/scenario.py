@@ -1,9 +1,9 @@
 """Loading and validation helpers for YAML scenario cases."""
+from __future__ import annotations
 import numpy as np
 import pandas as pd
 import yaml
 
-from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -24,7 +24,7 @@ class ScenarioConfig:
 
     name: str
     root: Path
-    wind_csv: Path
+    wind_csv: Path | None
     sample_dir: Path
     result_dir: Path
     add_gaussian_noise_std: float = 0.0
@@ -78,7 +78,7 @@ class ScenarioConfig:
             mesh=_optional_path(root, paths.get("mesh", geometry.get("mesh"))),
             wall_pattern=str(geometry.get("wall_pattern", cls.wall_pattern)),
             outflow_pattern=str(geometry.get("outflow_pattern", cls.outflow_pattern)),
-            wind_csv=_required_path(root, paths, data, "wind_csv"),
+            wind_csv=_optional_path(root, paths.get("wind_csv", data.get("wind_csv"))),
             sample_dir=_required_path(root, paths, data, "sample_dir"),
             result_dir=_required_path(root, paths, data, "result_dir"),
             add_gaussian_noise_std=float(

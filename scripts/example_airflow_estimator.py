@@ -11,8 +11,8 @@ from NS_wind_est import AirflowEstimator
 from NS_wind_est import Visualizer
 
 # Mesh file and measurement samples csv flile
-MESH = ROOT / "example_cases/10x6_appartment/geometry/appartment_2d_coarse.msh"
-SAMPLES = ROOT / "example_cases/10x6_appartment/samples/sample_points_n400_seed0.csv"
+MESH = ROOT / "example_cases/10x6_apartment/geometry/apartment_2d_coarse.msh"
+SAMPLES = ROOT / "example_cases/10x6_apartment/samples/sample_points_n400_seed0.csv"
 
 def main() -> None:
 
