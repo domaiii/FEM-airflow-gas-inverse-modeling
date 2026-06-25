@@ -16,10 +16,10 @@ inspection.
 3. Run the example demo scenario:
 
 ```bash
-   python scripts/run_ns_wind_scenario.py example_cases/10x6_appartment
+   python scripts/run_ns_wind_scenario.py example_cases/10x6_apartment
 ```
 
-## Installation
+## Setup
 
 The recommended setup is the Docker/dev-container environment included in this
 repository. It is based on `dolfinx/dolfinx:v0.9.0` and installs the Python
@@ -71,12 +71,6 @@ A scenario contains:
   conditions by name in the workflow;
 - sample CSV files that represent sparse airflow measurements in space. These
   files need to follow the column structure expected by the measurement reader;
-- optionally, a ground-truth wind file such as `wind_gt.csv`. This file is not
-  needed for the estimation itself, but it can be used with
-  `scripts/generate_csv_samples.py` to draw random measurement/sample sets;
-- a `scenario.yaml` file that manages paths, measurement settings, boundary
-  matching rules, solver parameters, and output locations.
-
 - optionally, a ground-truth wind file such as `wind_gt.csv`. This file is not
   needed for the estimation itself, but it can be used with
   `scripts/generate_csv_samples.py` to draw random measurement/sample sets;
@@ -141,8 +135,6 @@ The same workflow is available from Python:
 from NS_wind_est.scenario_runner import run_scenario
 
 result = run_scenario("example_cases/10x6_apartment", verbose=True)
-print(result.output_root)
-print(result.result_dirs)
 ```
 
 Outputs are written below the scenario `result_dir`, usually as
